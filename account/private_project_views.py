@@ -11,11 +11,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from account.authentication import QuietJWTAuthentication, CookieJWTAuthentication
-from account.employee_models import EmployeeProfile, PrivateProjectPlan, PrivateProjectAssignment, PrivateProjectDailyUpdate
+from account.employee_models import (
+    EmployeeProfile,
+    PrivateProjectPlan,
+    PrivateProjectAssignment,
+    PrivateProjectDailyUpdate,
+    CurrentProjectPlan,
+)
 from account.employee_serializers import (
     PrivateProjectPlanSerializer,
     PrivateProjectAssignmentSerializer,
     PrivateProjectDailyUpdateSerializer,
+    CurrentProjectPlanSerializer,
 )
 from account.models import Project
 from account.pagination import DefaultPageNumberPagination, wants_pagination
@@ -97,6 +104,13 @@ def _private_permissions(request):
     return [CanAccessPrivateProject()]
 
 
+def _project_by_pk(pk):
+    try:
+        return Project.objects.select_related("project_manager", "current_project_plan", "private_project_plan").get(pk=pk)
+    except Exception:
+        return None
+
+
 def _clean_private_plan_write_payload(plan_payload, project):
     """
     Frontends sometimes send extra keys (status, ticket_assignments, id, etc).
@@ -122,6 +136,39 @@ def _clean_private_plan_write_payload(plan_payload, project):
         cleaned["start_date"] = None
     if cleaned["end_date"] in ("", "null"):
         cleaned["end_date"] = None
+
+    return cleaned
+
+
+def _clean_current_plan_write_payload(plan_payload, project):
+    raw = plan_payload if isinstance(plan_payload, dict) else {}
+
+    project_name = raw.get("project_name") or raw.get("title") or raw.get("name") or ""
+    project_description = raw.get("project_description") or raw.get("description") or raw.get("details") or ""
+
+    cleaned = {
+        "project": getattr(project, "id", None),
+        "start_date": raw.get("start_date") or None,
+        "end_date": raw.get("end_date") or None,
+        "timeline": raw.get("timeline") or "",
+        "project_name": project_name,
+        "project_description": project_description,
+    }
+    if cleaned["start_date"] in ("", "null"):
+        cleaned["start_date"] = None
+    if cleaned["end_date"] in ("", "null"):
+        cleaned["end_date"] = None
+
+    # Pass through nested lists only if they look like lists.
+    assignments_payload = raw.get("assignments")
+    if not isinstance(assignments_payload, list):
+        assignments_payload = raw.get("employees")
+    if isinstance(assignments_payload, list):
+        cleaned["assignments"] = assignments_payload
+
+    ticket_payload = raw.get("ticket_assignments")
+    if isinstance(ticket_payload, list):
+        cleaned["ticket_assignments"] = ticket_payload
 
     return cleaned
 
@@ -255,6 +302,15 @@ def _private_project_payload(project, request, *, summary=False):
     return {
         "id": project.id,
         "project_id": project.id,
+        "project": {
+            "id": project.id,
+            "title": getattr(project, "title", "") or "",
+            "description": getattr(project, "description", "") or "",
+            "status": getattr(project, "status", "") or "",
+            "timeline": getattr(project, "timeline", "") or "",
+            "start_date": getattr(project, "start_date", None),
+            "end_date": getattr(project, "end_date", None),
+        },
         "title": project_name,
         "description": project_description,
         "status": (plan_data.get("status") if isinstance(plan_data, dict) else "") or "planned",
@@ -492,7 +548,7 @@ class PrivateProjectPlanAPI(APIView):
         return _private_permissions(self.request)
 
     def get(self, request, pk):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         if not (settings.DEBUG and not getattr(request.user, "is_authenticated", False)):
@@ -502,20 +558,25 @@ class PrivateProjectPlanAPI(APIView):
                 if not _is_admin(request.user):
                     return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
                 raise
-        plan = PrivateProjectPlan.objects.filter(project=project).first()
+        plan = getattr(project, "current_project_plan", None) or getattr(project, "private_project_plan", None)
         if plan is None:
             return Response({"detail": "Plan not created"}, status=status.HTTP_404_NOT_FOUND)
+        if isinstance(plan, CurrentProjectPlan):
+            return Response(CurrentProjectPlanSerializer(plan, context={"request": request}).data, status=status.HTTP_200_OK)
         return Response(PrivateProjectPlanSerializer(plan, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def post(self, request, pk):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         if not _is_admin(request.user):
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-        plan = PrivateProjectPlan.objects.filter(project=project).first()
-        if plan is not None:
-            return Response(PrivateProjectPlanSerializer(plan, context={"request": request}).data, status=status.HTTP_200_OK)
+        existing = getattr(project, "current_project_plan", None) or getattr(project, "private_project_plan", None)
+        if existing is not None:
+            if isinstance(existing, CurrentProjectPlan):
+                return Response(CurrentProjectPlanSerializer(existing, context={"request": request}).data, status=status.HTTP_200_OK)
+            return Response(PrivateProjectPlanSerializer(existing, context={"request": request}).data, status=status.HTTP_200_OK)
+
         plan = PrivateProjectPlan.objects.create(
             project=project,
             start_date=project.start_date,
@@ -527,19 +588,29 @@ class PrivateProjectPlanAPI(APIView):
         return Response(PrivateProjectPlanSerializer(plan, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
     def patch(self, request, pk):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         if not _is_admin(request.user):
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        incoming = request.data if isinstance(request.data, dict) else {}
+
+        current_plan = getattr(project, "current_project_plan", None)
+        if current_plan is not None:
+            data = _clean_current_plan_write_payload(incoming, project)
+            serializer = CurrentProjectPlanSerializer(current_plan, data=data, partial=True, context={"request": request})
+            serializer.is_valid(raise_exception=True)
+            current_plan = serializer.save()
+            return Response(CurrentProjectPlanSerializer(current_plan, context={"request": request}).data, status=status.HTTP_200_OK)
+
         plan = PrivateProjectPlan.objects.filter(project=project).first()
         if plan is None:
             return Response({"detail": "Plan not created"}, status=status.HTTP_404_NOT_FOUND)
-        data = _clean_private_plan_write_payload(request.data if isinstance(request.data, dict) else {}, project)
+        data = _clean_private_plan_write_payload(incoming, project)
         serializer = PrivateProjectPlanSerializer(plan, data=data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         plan = serializer.save()
-        _apply_private_assignments(plan, request.data if isinstance(request.data, dict) else {}, request)
+        _apply_private_assignments(plan, incoming, request)
         return Response(PrivateProjectPlanSerializer(plan, context={"request": request}).data, status=status.HTTP_200_OK)
 
 
@@ -552,7 +623,7 @@ class PrivateProjectPlanAssignmentsAPI(APIView):
         return _private_permissions(self.request)
 
     def post(self, request, pk):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         if not _is_admin(request.user):
@@ -597,7 +668,7 @@ class PrivateProjectPlanAssignmentAPI(APIView):
         return [IsAuthenticated()]
 
     def patch(self, request, pk, assignment_id):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         plan = PrivateProjectPlan.objects.filter(project=project).first()
@@ -624,7 +695,7 @@ class PrivateProjectPlanAssignmentAPI(APIView):
         return Response(PrivateProjectAssignmentSerializer(assignment, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def delete(self, request, pk, assignment_id):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         if not _is_admin(request.user):
@@ -652,7 +723,7 @@ class PrivateProjectDailyUpdatesAPI(APIView):
         return [IsAuthenticated()]
 
     def post(self, request, pk, assignment_id):
-        project = _project_queryset_for_user(request.user).filter(pk=pk).first()
+        project = _project_by_pk(pk)
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         plan = PrivateProjectPlan.objects.filter(project=project).first()

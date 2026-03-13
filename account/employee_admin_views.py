@@ -198,6 +198,13 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
 
         name = request.data.get("name", "")
         password = request.data.get("password", None)
+        login_id_value = (
+            request.data.get("login_id")
+            or request.data.get("loginId")
+            or request.data.get("login")
+            or request.data.get("username")
+            or ""
+        )
         current_project = request.data.get("private_project", request.data.get("private_project_id", None))
         current_project = request.data.get("current_project", request.data.get("current_project_id", current_project))
 
@@ -206,7 +213,6 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
             or request.data.get("gmail")
             or request.data.get("user_email")
             or request.data.get("userEmail")
-            or request.data.get("username")
             or ""
         )
 
@@ -218,6 +224,13 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
             or request.data.get("mobileNo")
             or ""
         )
+
+        # Support admin UI that only sends `login_id` (email or phone).
+        login_id_value = str(login_id_value).strip()
+        if not (isinstance(email_value, str) and email_value.strip()) and login_id_value and "@" in login_id_value:
+            email_value = login_id_value
+        if not str(phone_value).strip() and login_id_value and "@" not in login_id_value:
+            phone_value = login_id_value
 
         payload = {
             "phone": str(phone_value).strip(),
