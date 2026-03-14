@@ -53,6 +53,18 @@ def _employee_document_api_url(request, employee_id, document_id):
     return path
 
 
+def _employee_integrity_error_detail(exc):
+    message = _clean_text(exc)
+    lowered = message.lower()
+    duplicate_tokens = ("duplicate key value", "unique constraint", "unique failed")
+    login_tokens = ("email", "username")
+
+    if any(token in lowered for token in duplicate_tokens) and any(token in lowered for token in login_tokens):
+        return {"email": "Email/login already exists."}
+
+    return {"detail": message or "Employee creation failed due to a database constraint."}
+
+
 class EmployeeProfileSerializer(serializers.ModelSerializer):
     """Serializer for Employee Profile"""
     user_email = serializers.CharField(source='user.email', read_only=True)
@@ -709,8 +721,8 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
 
         try:
             user.save()
-        except IntegrityError:
-            raise serializers.ValidationError({'email': 'Email/login already exists.'})
+        except IntegrityError as exc:
+            raise serializers.ValidationError(_employee_integrity_error_detail(exc))
 
         return super().update(instance, validated_data)
 
@@ -734,8 +746,8 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
                 phoneno=phone,
                 password=password or get_random_string(24),
             )
-        except IntegrityError:
-            raise serializers.ValidationError({'email': 'Email/login already exists.'})
+        except IntegrityError as exc:
+            raise serializers.ValidationError(_employee_integrity_error_detail(exc))
         if isinstance(profile_image, UploadedFile):
             user.profile_image = profile_image
             user.save()

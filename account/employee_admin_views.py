@@ -41,6 +41,7 @@ from account.employee_serializers import (
     EmployeeTicketCommentSerializer,
     EmployeeTicketDetailSerializer,
     EmployeeTicketListSerializer,
+    _employee_integrity_error_detail,
     _ticket_status_from_api,
     LeaveRequestSerializer,
     OvertimeRequestSerializer,
@@ -259,8 +260,8 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
         except ValidationError as exc:
             detail = getattr(exc, "detail", exc.args[0] if exc.args else {"detail": "Invalid employee data"})
             return Response(detail, status=status.HTTP_400_BAD_REQUEST)
-        except IntegrityError:
-            return Response({"detail": "Employee email/login already exists."}, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError as exc:
+            return Response(_employee_integrity_error_detail(exc), status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             return Response(
                 {"detail": f"Employee creation failed: {str(exc)}"} if settings.DEBUG else {"detail": "Employee creation failed"},
@@ -366,11 +367,8 @@ class EmployeeDetailAPI(DebugForce200Mixin, APIView):
                 employee = serializer.save()
             except ValidationError as exc:
                 return Response(getattr(exc, "detail", {"detail": "Invalid data"}), status=status.HTTP_400_BAD_REQUEST)
-            except IntegrityError:
-                return Response(
-                    {"detail": "Email/login already exists. Use a different email."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            except IntegrityError as exc:
+                return Response(_employee_integrity_error_detail(exc), status=status.HTTP_400_BAD_REQUEST)
             except Exception as exc:
                 return Response(
                     {"detail": f"Employee update failed: {str(exc)}"},
