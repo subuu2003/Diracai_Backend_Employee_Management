@@ -141,6 +141,15 @@ def send_otp_via_sms(phone, otp_code):
         return False
 
 
+def _attach_fallback_otp(response_data, otp_code, email_sent, sms_sent):
+    # If no delivery channel worked, expose the OTP so production logins can still proceed.
+    if not email_sent and not sms_sent:
+        response_data["otp_code"] = otp_code
+    elif settings.DEBUG:
+        response_data["otp_code"] = otp_code
+    return response_data
+
+
 class EmployeeLoginRequestView(DebugForce200Mixin, APIView):
     """
     Step 1: Employee enters email/phone and password
@@ -209,8 +218,7 @@ class EmployeeLoginRequestView(DebugForce200Mixin, APIView):
             'sms_sent': sms_sent,
             'otp_expires_in_minutes': 10,
         }
-        if settings.DEBUG:
-            response_data['otp_code'] = otp.otp_code
+        response_data = _attach_fallback_otp(response_data, otp.otp_code, email_sent, sms_sent)
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -415,15 +423,16 @@ class EmployeeResendOTPView(DebugForce200Mixin, APIView):
         first = getattr(user, 'firstname', '') or ''
         last = getattr(user, 'lastname', '') or ''
         full_name = f"{first} {last}".strip() or getattr(user, 'username', '')
-        send_otp_via_email(user.email, otp.otp_code, full_name)
-        send_otp_via_sms(employee.phone, otp.otp_code)
+        email_sent = send_otp_via_email(user.email, otp.otp_code, full_name)
+        sms_sent = send_otp_via_sms(employee.phone, otp.otp_code)
 
         response_data = {
             'success': True,
             'message': 'OTP resent successfully',
+            'email_sent': email_sent,
+            'sms_sent': sms_sent,
             'otp_expires_in_minutes': 10,
         }
-        if settings.DEBUG:
-            response_data['otp_code'] = otp.otp_code
+        response_data = _attach_fallback_otp(response_data, otp.otp_code, email_sent, sms_sent)
 
         return Response(response_data, status=status.HTTP_200_OK)
