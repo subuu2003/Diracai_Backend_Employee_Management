@@ -989,6 +989,13 @@ class ProjectAPI(APIView):
             if field not in data or data[field] is None:
                 data[field] = [] if field in ['technologies', 'challenges', 'outcomes', 'gallery', 'working_days', 'team_members'] else {}
 
+        # Handle uploaded gallery files
+        gallery_files = request.FILES.getlist('gallery_files')
+        for f in gallery_files:
+            file_name = default_storage.save(f'projects/gallery/{f.name}', f)
+            file_url = default_storage.url(file_name)
+            data['gallery'].append(file_url)
+
         # Public `/api/projects/` must not accept or return internal employee assignment fields.
         data.pop("employee_team_members", None)
 

@@ -665,6 +665,7 @@ class TeamMemberSerializer(serializers.ModelSerializer):
             "joinDate": {"required": False, "allow_null": True},
             "skills": {"required": False},
             "image": {"required": False, "allow_null": True},
+            "linkedin_url": {"required": False, "allow_null": True},
         }
 
     def validate_status(self, value):

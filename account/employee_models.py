@@ -34,6 +34,7 @@ class EmployeeProfile(models.Model):
     location = models.CharField(max_length=200, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='inactive')
     private_project = models.ForeignKey('account.Project', on_delete=models.SET_NULL, null=True, blank=True, related_name='employees')
+    linkedin_url = models.URLField(max_length=500, blank=True, null=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

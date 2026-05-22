@@ -408,6 +408,7 @@ class PublicEmployeeSerializer(serializers.ModelSerializer):
             'private_project',
             'private_project_title',
             'documents',
+            'linkedin_url',
             'created_at',
             'updated_at',
         ]
@@ -482,6 +483,7 @@ class PublicEmployeeListSerializer(serializers.ModelSerializer):
             'is_active',
             'private_project',
             'private_project_title',
+            'linkedin_url',
             'created_at',
             'updated_at',
         ]
@@ -566,6 +568,7 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
             'has_password',
             'private_project',
             'private_project_title',
+            'linkedin_url',
             'created_at',
             'updated_at',
         ]
@@ -823,6 +826,7 @@ class EmployeeAdminListSerializer(serializers.ModelSerializer):
             'is_active',
             'private_project',
             'private_project_title',
+            'linkedin_url',
             'created_at',
             'updated_at',
         ]
