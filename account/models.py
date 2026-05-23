@@ -246,7 +246,7 @@ class Project(models.Model):
     # Existing fields
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    category = models.CharField(max_length=100, blank=True, choices=CATEGORY_CHOICES, default='mobile')
+    category = models.CharField(max_length=500, blank=True, default='mobile')
     start_date = models.DateField(blank=True, null=True)
     end_date = models.DateField(blank=True, null=True)
     image = models.ImageField(upload_to='projects/', blank=True, null=True)
