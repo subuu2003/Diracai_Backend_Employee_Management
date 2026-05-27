@@ -187,6 +187,7 @@ class TestimonialDetailAPI(APIView):
 
 
 class AdminDashboardAPI(APIView):
+    authentication_classes = [QuietJWTAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):

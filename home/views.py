@@ -246,7 +246,14 @@ class HeroVideoListCreateView(APIView):
         if not (request.user.is_staff or request.user.is_superuser or getattr(request.user, 'is_admin', False)):
             return Response({'detail': 'Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
 
-        data = request.data.copy()
+        # Build a plain dict from non-file fields to avoid deepcopy of file handles
+        # (request.data.copy() on a multipart QueryDict tries to deepcopy BufferedRandom
+        #  file objects, which raises "cannot pickle '_io.BufferedRandom' object")
+        data = {key: request.data[key] for key in request.data if key not in request.FILES}
+
+        # Merge uploaded files into the data dict
+        for key, f in request.FILES.items():
+            data[key] = f
 
         # Auto-detect media_type from the uploaded file MIME type
         uploaded_file = request.FILES.get('video') or request.FILES.get('image') or request.FILES.get('file')
@@ -254,11 +261,11 @@ class HeroVideoListCreateView(APIView):
             mime = getattr(uploaded_file, 'content_type', '') or ''
             if mime.startswith('image/'):
                 data['media_type'] = 'image'
-                if 'image' not in request.FILES and 'file' in request.FILES:
-                    data['image'] = request.FILES['file']
-                elif 'image' not in request.FILES:
+                # Normalise: always store under the 'image' key
+                if 'image' not in request.FILES:
                     data['image'] = uploaded_file
                     data.pop('video', None)
+                    data.pop('file', None)
             else:
                 data['media_type'] = 'video'
 
