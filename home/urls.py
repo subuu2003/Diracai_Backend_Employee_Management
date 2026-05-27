@@ -160,6 +160,16 @@ path("class/specifics/",views.reactapp,name='redirect10'),
 
 
 
+
+
+    # ─── Site Configuration API ───────────────────────────────────────
+    path("api/site-config/", views.SiteConfigPublicView.as_view(), name="site-config-public"),
+    path("api/site-config/update/", views.SiteConfigAdminView.as_view(), name="site-config-admin"),
+
+    # ─── Hero Video Library API ───────────────────────────────────────
+    path("api/hero-videos/", views.HeroVideoListCreateView.as_view(), name="hero-videos-list"),
+    path("api/hero-videos/<int:pk>/", views.HeroVideoDetailView.as_view(), name="hero-videos-detail"),
+
 ]
 
 
