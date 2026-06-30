@@ -138,6 +138,7 @@ class ServiceSerializer(serializers.ModelSerializer):
             'demo_video_url',
             'status',
             'sort_order',
+            'show_on_homepage',
             'created_at',
             'updated_at',
             'use_cases',
@@ -920,6 +921,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "documentationUrl",
             "pricing",
             "featured",
+            "show_on_homepage",
             "sortOrder",
             "gallery_images",
             "created_at",
@@ -1311,3 +1313,10 @@ class BlogCommentAdminSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+from .models import CompanyCertificate
+
+class CompanyCertificateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyCertificate
+        fields = '__all__'

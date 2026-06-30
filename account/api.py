@@ -412,8 +412,9 @@ class ServiceAPI(APIView):
                 else:
                     data[field] = []
 
-        # Add developers back to data
-        data['developers'] = developer_ids
+        # Add developers back to data only if provided
+        if 'developers' in mutable_data:
+            data['developers'] = developer_ids
         if use_cases_value is not None:
             data['use_cases'] = use_cases_value
 
@@ -429,7 +430,7 @@ class ServiceAPI(APIView):
         service = cast(Service, serializer.save())
 
         # Handle developers ManyToMany
-        if 'developers' in data:
+        if 'developers' in mutable_data:
             print("8. Setting developers to service:", data['developers'])
             service.developers.set(data['developers'])
 
@@ -1494,3 +1495,48 @@ class ProductGalleryAPI(APIView):
         
         gallery_item.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+from .models import CompanyCertificate
+from .serializers import CompanyCertificateSerializer
+
+class CompanyCertificateAPI(APIView):
+    # permission_classes = [IsAuthenticated] # Adjust if needed
+
+    def get(self, request, pk=None):
+        if pk:
+            try:
+                cert = CompanyCertificate.objects.get(pk=pk)
+                serializer = CompanyCertificateSerializer(cert)
+                return Response(serializer.data)
+            except CompanyCertificate.DoesNotExist:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+        certs = CompanyCertificate.objects.all()
+        serializer = CompanyCertificateSerializer(certs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = CompanyCertificateSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, pk):
+        try:
+            cert = CompanyCertificate.objects.get(pk=pk)
+        except CompanyCertificate.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+            
+        serializer = CompanyCertificateSerializer(cert, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        try:
+            cert = CompanyCertificate.objects.get(pk=pk)
+            cert.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except CompanyCertificate.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)

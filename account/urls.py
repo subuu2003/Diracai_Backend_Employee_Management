@@ -24,6 +24,7 @@ from .api import (
     TestimonialDetailAPI,
     ImageUploadAPI,
     AdminImageUploadAPI,
+    CompanyCertificateAPI,
 )
 from .employee_admin_views import (
     EmployeeDetailAPI,
@@ -190,6 +191,10 @@ urlpatterns = [
     
     # Product Gallery
     path('api/products/gallery/', ProductGalleryAPI.as_view(), name='product-gallery-list'),
+    
+    # Certificates
+    path('api/certificates/', CompanyCertificateAPI.as_view(), name='certificate-list'),
+    path('api/certificates/<int:pk>/', CompanyCertificateAPI.as_view(), name='certificate-detail'),
     path('api/products/gallery/<int:gallery_pk>/', ProductGalleryAPI.as_view(), name='product-gallery-detail'),
     path('api/products/<int:product_pk>/gallery/', ProductGalleryAPI.as_view(), name='product-specific-gallery'),
 
