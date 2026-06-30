@@ -50,7 +50,7 @@ class HeroVideoSerializer(serializers.ModelSerializer):
     class Meta:
         model = HeroVideo
         fields = [
-            'id', 'media_type', 'title', 'heading', 'subheading', 'duration', 'is_selected', 'order',
+            'id', 'media_type', 'title', 'heading', 'subheading', 'button_text', 'button_link', 'duration', 'is_selected', 'order',
             'video',        # write-only upload
             'video_url',    # read-only CDN URL
             'image',        # write-only upload

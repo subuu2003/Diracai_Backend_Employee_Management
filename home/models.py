@@ -81,6 +81,14 @@ class HeroVideo(models.Model):
         blank=True, default='',
         help_text='Custom subheading for this specific slide. Supports multiple lines.'
     )
+    button_text = models.CharField(
+        max_length=50, blank=True, default='',
+        help_text='Text for the action button (e.g., "Learn More").'
+    )
+    button_link = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='URL or path for the action button to link to.'
+    )
     duration = models.PositiveIntegerField(
         default=8,
         help_text='Seconds this clip plays before switching to the next.'

@@ -230,7 +230,7 @@ class HeroVideoListCreateView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_permissions(self):
-        if self.request.method == 'GET':
+        if self.request.method in ['GET', 'OPTIONS']:
             return [AllowAny()]
         return [IsAuthenticated()]
 
