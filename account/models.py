@@ -96,6 +96,7 @@ class Service(models.Model):
     # Metadata
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     sort_order = models.IntegerField(default=0)
+    show_on_homepage = models.BooleanField(default=False, help_text="Show this service in the Home Page 'What We Do' section")
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -400,6 +401,7 @@ class Product(models.Model):
 
     # Settings
     featured = models.BooleanField(default=False)
+    show_on_homepage = models.BooleanField(default=False, help_text="Show this product in the Home Page 'Our Products' section")
     sortOrder = models.IntegerField(default=0)
     
     # Timestamps
@@ -863,5 +865,18 @@ class BlogComment(models.Model):
 
 
 from .employee_models import EmployeeProfile, OTPVerification, LeaveRequest, OvertimeRequest, EmployeeDocument
+
+class CompanyCertificate(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    certificate_no = models.CharField(max_length=255, blank=True, null=True)
+    issued_by = models.CharField(max_length=255, blank=True, null=True)
+    validity = models.CharField(max_length=255, blank=True, null=True)
+    photo = models.ImageField(upload_to='certificates/', blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
 
 

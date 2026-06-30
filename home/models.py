@@ -73,6 +73,14 @@ class HeroVideo(models.Model):
         max_length=100, blank=True, default='',
         help_text='Optional label (shown in admin only).'
     )
+    heading = models.TextField(
+        blank=True, default='',
+        help_text='Main custom heading for this specific slide. Supports multiple lines.'
+    )
+    subheading = models.TextField(
+        blank=True, default='',
+        help_text='Custom subheading for this specific slide. Supports multiple lines.'
+    )
     duration = models.PositiveIntegerField(
         default=8,
         help_text='Seconds this clip plays before switching to the next.'

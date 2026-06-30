@@ -268,6 +268,10 @@ class HeroVideoListCreateView(APIView):
                     data.pop('file', None)
             else:
                 data['media_type'] = 'video'
+                if 'video' not in request.FILES:
+                    data['video'] = uploaded_file
+                    data.pop('image', None)
+                    data.pop('file', None)
 
         serializer = HeroVideoSerializer(data=data, context={'request': request})
         if serializer.is_valid():
