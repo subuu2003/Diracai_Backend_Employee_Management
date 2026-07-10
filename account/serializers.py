@@ -715,10 +715,14 @@ class ProjectSerializer(serializers.ModelSerializer):
     employee_team_members_data = PublicEmployeeSerializer(source='employee_team_members', many=True, read_only=True)
     project_manager = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
     project_manager_name = serializers.SerializerMethodField()
+    pdf_booklet_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
         fields = "__all__"
+        extra_kwargs = {
+            "pdf_booklet": {"write_only": True, "required": False},
+        }
 
     def get_project_manager_name(self, obj):
         user = getattr(obj, 'project_manager', None)
@@ -728,6 +732,21 @@ class ProjectSerializer(serializers.ModelSerializer):
         last = getattr(user, 'lastname', '') or ''
         full = f"{first} {last}".strip()
         return full or getattr(user, 'username', None)
+
+    def get_pdf_booklet_url(self, obj):
+        """Return the full CDN URL for the PDF booklet, if one has been uploaded."""
+        if not obj.pdf_booklet:
+            return None
+        request = self.context.get("request")
+        try:
+            url = obj.pdf_booklet.url
+            if url.startswith("http"):
+                return url
+            if request:
+                return request.build_absolute_uri(url)
+            return url
+        except Exception:
+            return None
 
 
 class ProjectListSerializer(serializers.ModelSerializer):

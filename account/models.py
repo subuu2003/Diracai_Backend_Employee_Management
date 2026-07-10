@@ -279,6 +279,12 @@ class Project(models.Model):
     icon = models.CharField(max_length=50, default='Briefcase')
     liveUrl = models.URLField(blank=True)  # Changed from live_url
     videoUrl = models.URLField(blank=True)  # Changed from video_url
+    pdf_booklet = models.FileField(
+        upload_to='project-pdfs/',
+        null=True,
+        blank=True,
+        help_text="Optional PDF booklet for the project (stored in DigitalOcean Spaces / CDN)."
+    )
     sortOrder = models.IntegerField(default=0, help_text="Order in which projects appear (lower numbers first)")
     
     # Testimonial fields
