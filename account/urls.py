@@ -20,11 +20,18 @@ from .api import (
     GisServiceAPI,
     GisServiceBySlugAPI,
     GisServiceExploreSubsectionAPI,
+    ITSolutionAPI,
+    ITSolutionBySlugAPI,
+    ITSolutionExploreSubsectionAPI,
     TestimonialAPI,
     TestimonialDetailAPI,
     ImageUploadAPI,
     AdminImageUploadAPI,
+    AdminImageUploadAPI,
     CompanyCertificateAPI,
+    ContactInquirySubmitAPI,
+    ContactInquiryAdminAPI,
+    ContactInquiryReplyAPI,
 )
 from .employee_admin_views import (
     EmployeeDetailAPI,
@@ -150,6 +157,15 @@ urlpatterns = [
     path('api/gis-services/<slug:service_slug>/<slug:sub_slug>', GisServiceExploreSubsectionAPI.as_view(), name='gis-service-explore-subsection-noslash'),
     re_path(r'^api/gis-services/(?P<service_slug>[-\w]+)/(?P<sub_slug>[-\w]+)/?$', GisServiceExploreSubsectionAPI.as_view(), name='gis-service-explore-subsection-regex'),
     re_path(r'^api//gis-services/(?P<service_slug>[-\w]+)/(?P<sub_slug>[-\w]+)/?$', GisServiceExploreSubsectionAPI.as_view(), name='gis-service-explore-subsection-double-slash'),
+    
+    path('api/it-solutions/', ITSolutionAPI.as_view(), name='it-solution-list'),
+    path('api/it-solutions/<str:pk>/', ITSolutionAPI.as_view(), name='it-solution-detail'),
+    path('api/it-solutions/by-slug/<slug:slug>/', ITSolutionBySlugAPI.as_view(), name='it-solution-by-slug'),
+    path('api/it-solutions/by-slug/<slug:slug>', ITSolutionBySlugAPI.as_view(), name='it-solution-by-slug-noslash'),
+    path('api/it-solutions/<slug:service_slug>/<slug:sub_slug>/', ITSolutionExploreSubsectionAPI.as_view(), name='it-solution-explore-subsection'),
+    path('api/it-solutions/<slug:service_slug>/<slug:sub_slug>', ITSolutionExploreSubsectionAPI.as_view(), name='it-solution-explore-subsection-noslash'),
+    re_path(r'^api/it-solutions/(?P<service_slug>[-\w]+)/(?P<sub_slug>[-\w]+)/?$', ITSolutionExploreSubsectionAPI.as_view(), name='it-solution-explore-subsection-regex'),
+    re_path(r'^api//it-solutions/(?P<service_slug>[-\w]+)/(?P<sub_slug>[-\w]+)/?$', ITSolutionExploreSubsectionAPI.as_view(), name='it-solution-explore-subsection-double-slash'),
     # Admin Dashboard
     path('api/admin/dashboard/', AdminDashboardAPI.as_view(), name='admin-dashboard'),
 
@@ -197,6 +213,12 @@ urlpatterns = [
     path('api/certificates/<int:pk>/', CompanyCertificateAPI.as_view(), name='certificate-detail'),
     path('api/products/gallery/<int:gallery_pk>/', ProductGalleryAPI.as_view(), name='product-gallery-detail'),
     path('api/products/<int:product_pk>/gallery/', ProductGalleryAPI.as_view(), name='product-specific-gallery'),
+
+    # Contact Inquiries
+    path('api/contact/submit/', ContactInquirySubmitAPI.as_view(), name='contact-submit'),
+    path('api/admin/contact-inquiries/', ContactInquiryAdminAPI.as_view(), name='admin-contact-inquiries'),
+    path('api/admin/contact-inquiries/<int:pk>/', ContactInquiryAdminAPI.as_view(), name='admin-contact-inquiries-detail'),
+    path('api/admin/contact-inquiries/<int:pk>/reply/', ContactInquiryReplyAPI.as_view(), name='admin-contact-inquiries-reply'),
 
     # ✅ EMPLOYEE AUTHENTICATION WITH OTP
     path('api/employee/', include('account.employee_urls')),
