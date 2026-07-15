@@ -235,13 +235,13 @@ def contact_api_submission(request):
 
             html_message = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #2563eb;">New Contact Form Submission - DiracAI</h2>
+                <h2 style="color: #245091;">New Contact Form Submission - DiracAI</h2>
                 <div style="background: #f8fafc; padding: 20px; border-radius: 8px;">
                     <p><strong>Name:</strong> {full_name}</p>
                     <p><strong>Email:</strong> {email}</p>
                     <p><strong>Subject:</strong> {subject or 'Not specified'}</p>
                     <p><strong>Message:</strong></p>
-                    <div style="background: white; padding: 15px; border-radius: 4px; border-left: 4px solid #2563eb;">
+                    <div style="background: white; padding: 15px; border-radius: 4px; border-left: 4px solid #245091;">
                         {safe_message}
                     </div>
                 </div>

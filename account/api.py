@@ -15,8 +15,8 @@ from django.db.models import Q
 from django.db.models import F
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.renderers import JSONRenderer, BrowsableAPIRenderer
-from .models import Service, GisService, TeamMember, Project, ProjectMembership, GalleryItem, Product, ProductGallery, Testimonial
-from .serializers import ServiceSerializer, GisServiceSerializer, TeamMemberSerializer, ProjectSerializer, ProjectListSerializer, ProjectMembershipSerializer, GalleryItemSerializer, ProductSerializer, ProductGallerySerializer, TestimonialSerializer
+from .models import Service, GisService, ITSolution, TeamMember, Project, ProjectMembership, GalleryItem, Product, ProductGallery, Testimonial
+from .serializers import ServiceSerializer, GisServiceSerializer, ITSolutionSerializer, TeamMemberSerializer, ProjectSerializer, ProjectListSerializer, ProjectMembershipSerializer, GalleryItemSerializer, ProductSerializer, ProductGallerySerializer, TestimonialSerializer
 from account.authentication import QuietJWTAuthentication
 from account.employee_models import EmployeeProfile, CurrentProjectPlan
 from account.employee_serializers import CurrentProjectPlanSerializer, PrivateProjectPlanSerializer
@@ -287,7 +287,7 @@ class ServiceAPI(APIView):
         print("3. getlist developers:", request.data.getlist('developers') if hasattr(request.data, 'getlist') else 'No getlist')
 
         # FIX: Create a mutable copy of request.data
-        mutable_data = request.data.copy()
+        mutable_data = {key: value for key, value in request.data.items()}
 
         print("4. mutable_data['developers']:", mutable_data.get('developers'))
         print("5. Type in mutable_data:", type(mutable_data.get('developers')))
@@ -503,7 +503,7 @@ class GisServiceAPI(APIView):
             return Response({'error': 'Service not found'}, status=404)
 
     def _save_service(self, request, instance=None):
-        mutable_data = request.data.copy()
+        mutable_data = {key: value for key, value in request.data.items()}
 
         developer_ids = []
         if hasattr(request.data, 'getlist') and request.data.getlist('developers'):
@@ -750,6 +750,251 @@ class ServiceBySlugAPI(APIView):
         serializer = ServiceSerializer(service)
         return Response(serializer.data)
 
+
+
+# ------------------ IT SOLUTION API ------------------
+class ITSolutionAPI(APIView):
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return []
+        return [IsAuthenticated()]
+
+    def get(self, request, pk=None):
+        queryset = ITSolution.objects.prefetch_related('developers')
+
+        if pk:
+            try:
+                service = queryset.get(pk=pk)
+            except ITSolution.DoesNotExist:
+                try:
+                    service = queryset.get(slug=pk)
+                except ITSolution.DoesNotExist:
+                    return Response({'error': 'Service not found'}, status=404)
+            serializer = ITSolutionSerializer(service)
+            return Response(serializer.data)
+
+        if request.user and request.user.is_authenticated and (request.user.is_staff or request.user.is_superuser):
+            services = queryset.all()
+            status_param = request.query_params.get('status')
+            if status_param:
+                services = services.filter(status=status_param)
+        else:
+            services = queryset
+            status_param = request.query_params.get('status', 'active')
+            if status_param:
+                services = services.filter(status=status_param)
+            exclude = request.query_params.get('exclude')
+            if exclude:
+                services = services.exclude(id=exclude)
+
+        serializer = ITSolutionSerializer(services, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, pk=None):
+        if pk is not None:
+            return Response({"detail": "Method \"POST\" not allowed."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+        return self._save_service(request)
+
+    def put(self, request, pk=None):
+        try:
+            service = ITSolution.objects.get(pk=pk)
+        except ITSolution.DoesNotExist:
+            return Response({'error': 'Service not found'}, status=404)
+        return self._save_service(request, instance=service)
+
+    def delete(self, request, pk=None):
+        try:
+            service = ITSolution.objects.get(pk=pk)
+            service.delete()
+            return Response(status=204)
+        except ITSolution.DoesNotExist:
+            return Response({'error': 'Service not found'}, status=404)
+
+    def _save_service(self, request, instance=None):
+        mutable_data = {key: value for key, value in request.data.items()}
+
+        developer_ids = []
+        if hasattr(request.data, 'getlist') and request.data.getlist('developers'):
+            dev_list = request.data.getlist('developers')
+            for dev_item in dev_list:
+                if isinstance(dev_item, str):
+                    if dev_item.startswith('[') and dev_item.endswith(']'):
+                        try:
+                            parsed = json.loads(dev_item)
+                            if isinstance(parsed, list):
+                                for item in parsed:
+                                    try:
+                                        developer_ids.append(int(item))
+                                    except (ValueError, TypeError):
+                                        continue
+                        except json.JSONDecodeError:
+                            for id_str in dev_item.strip('[]').split(','):
+                                try:
+                                    developer_ids.append(int(id_str.strip()))
+                                except ValueError:
+                                    continue
+                    else:
+                        try:
+                            developer_ids.append(int(dev_item))
+                        except ValueError:
+                            continue
+                elif isinstance(dev_item, (int, float)):
+                    developer_ids.append(int(dev_item))
+        elif 'developers' in request.data:
+            dev_value = request.data['developers']
+            if isinstance(dev_value, str):
+                if dev_value.strip() == '[]' or dev_value.strip() == '':
+                    developer_ids = []
+                else:
+                    try:
+                        parsed = json.loads(dev_value)
+                        if isinstance(parsed, list):
+                            for item in parsed:
+                                try:
+                                    developer_ids.append(int(item))
+                                except (ValueError, TypeError):
+                                    continue
+                    except json.JSONDecodeError:
+                        for id_str in dev_value.split(','):
+                            try:
+                                developer_ids.append(int(id_str.strip()))
+                            except ValueError:
+                                continue
+            elif isinstance(dev_value, list):
+                for item in dev_value:
+                    try:
+                        developer_ids.append(int(item))
+                    except (ValueError, TypeError):
+                        continue
+
+        if 'developers' in mutable_data:
+            del mutable_data['developers']
+
+        list_fields = ['features', 'benefits', 'technologies']
+
+        use_cases_value = None
+        if 'use_cases' in mutable_data:
+            raw_use_cases = mutable_data.get('use_cases')
+            if isinstance(raw_use_cases, str):
+                try:
+                    parsed = json.loads(raw_use_cases)
+                    use_cases_value = parsed if isinstance(parsed, list) else []
+                except json.JSONDecodeError:
+                    use_cases_value = []
+            elif isinstance(raw_use_cases, list):
+                use_cases_value = raw_use_cases
+
+        data = {}
+        for key in mutable_data:
+            if key in list_fields or key == 'use_cases':
+                continue
+            data[key] = mutable_data.get(key)
+
+        for field in list_fields:
+            if field in mutable_data:
+                value = mutable_data[field]
+                if isinstance(value, str):
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, list):
+                            data[field] = [str(item).strip() for item in parsed if str(item).strip()]
+                        else:
+                            items = []
+                            for line in value.split('\n'):
+                                items.extend([item.strip() for item in line.split(',') if item.strip()])
+                            data[field] = items
+                    except json.JSONDecodeError:
+                        items = []
+                        for line in value.split('\n'):
+                            items.extend([item.strip() for item in line.split(',') if item.strip()])
+                        data[field] = items
+                elif isinstance(value, list):
+                    data[field] = [str(item).strip() for item in value if str(item).strip()]
+                else:
+                    data[field] = []
+
+        data['developers'] = developer_ids
+        if use_cases_value is not None:
+            data['use_cases'] = use_cases_value
+
+        serializer = ITSolutionSerializer(instance, data=data, partial=True) if instance else ITSolutionSerializer(data=data)
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        service = cast(ITSolution, serializer.save())
+
+        if 'developers' in data:
+            service.developers.set(data['developers'])
+
+        return Response(
+            ITSolutionSerializer(service).data,
+            status=200 if instance else 201
+        )
+
+
+class ITSolutionBySlugAPI(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        try:
+            service = ITSolution.objects.get(slug=slug)
+        except ITSolution.DoesNotExist:
+            return Response({'error': 'Service not found'}, status=404)
+
+        if service.status != 'active':
+            return Response({'error': 'Service not found'}, status=404)
+
+        serializer = ITSolutionSerializer(service)
+        return Response(serializer.data)
+
+
+class ITSolutionExploreSubsectionAPI(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, service_slug, sub_slug):
+        try:
+            service = ITSolution.objects.get(slug=service_slug)
+        except ITSolution.DoesNotExist:
+            return Response({'error': 'Service not found'}, status=404)
+
+        is_admin = bool(
+            request.user
+            and request.user.is_authenticated
+            and (request.user.is_staff or request.user.is_superuser)
+        )
+
+        if not is_admin and service.status != 'active':
+            return Response({'error': 'Service not found'}, status=404)
+
+        explore = getattr(service, 'explore', None) or {}
+        subsections = explore.get('subsections', []) if isinstance(explore, dict) else []
+
+        if not isinstance(subsections, list):
+            subsections = []
+
+        match = None
+        for subsection in subsections:
+            if not isinstance(subsection, dict):
+                continue
+            if str(subsection.get('slug', '')).strip() == sub_slug:
+                match = subsection
+                break
+
+        if not match:
+            return Response({'error': 'Subsection not found'}, status=404)
+
+        return Response(
+            {
+                'service_slug': service.slug,
+                'service_title': service.title,
+                'explore_title': (explore.get('title') if isinstance(explore, dict) else ''),
+                'subsection': match,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 def _is_admin(user):
     return bool(user and getattr(user, "is_authenticated", False) and (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "is_admin", False)))
@@ -1585,3 +1830,83 @@ class CompanyCertificateAPI(APIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
         except CompanyCertificate.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
+
+from .serializers import ContactInquirySerializer
+
+class ContactInquirySubmitAPI(APIView):
+    permission_classes = [] # Open to the public
+
+    def post(self, request):
+        serializer = ContactInquirySerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {"message": "Inquiry submitted successfully.", "data": serializer.data},
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+from django.core.mail import send_mail
+from django.utils import timezone
+from .models import ContactInquiry
+from rest_framework.permissions import IsAuthenticated
+
+class ContactInquiryAdminAPI(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, pk=None):
+        if not getattr(request.user, "is_admin", False):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            
+        if pk:
+            try:
+                inquiry = ContactInquiry.objects.get(pk=pk)
+                serializer = ContactInquirySerializer(inquiry)
+                return Response(serializer.data)
+            except ContactInquiry.DoesNotExist:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+                
+        inquiries = ContactInquiry.objects.all().order_by('-created_at')
+        serializer = ContactInquirySerializer(inquiries, many=True)
+        return Response(serializer.data)
+
+    def delete(self, request, pk):
+        if not getattr(request.user, "is_admin", False):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            
+        try:
+            inquiry = ContactInquiry.objects.get(pk=pk)
+            inquiry.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ContactInquiry.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+class ContactInquiryReplyAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not getattr(request.user, "is_admin", False):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+            
+        try:
+            inquiry = ContactInquiry.objects.get(pk=pk)
+        except ContactInquiry.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+            
+        reply_message = request.data.get('reply_message')
+        if not reply_message:
+            return Response({"error": "Reply message is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Send email
+        subject = f"Re: {inquiry.subject}"
+        from_email = None # Uses DEFAULT_FROM_EMAIL
+        recipient_list = [inquiry.email]
+        
+        try:
+            send_mail(subject, reply_message, from_email, recipient_list)
+            inquiry.admin_reply = reply_message
+            inquiry.replied_at = timezone.now()
+            inquiry.save()
+            return Response({"message": "Reply sent successfully", "data": ContactInquirySerializer(inquiry).data})
+        except Exception as e:
+            return Response({"error": f"Failed to send email: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

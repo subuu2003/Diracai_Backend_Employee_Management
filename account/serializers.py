@@ -7,6 +7,7 @@ from .models import (
     Testimonial,
     Service,
     GisService,
+    ITSolution,
     TeamMember,
     Project,
     ProjectMembership,
@@ -143,6 +144,7 @@ class ServiceSerializer(serializers.ModelSerializer):
             'updated_at',
             'use_cases',
             'explore',
+            'pdf_booklet',
         ]
         read_only_fields = ['id', 'slug', 'created_at', 'updated_at']
 
@@ -431,7 +433,157 @@ class GisServiceSerializer(ServiceSerializer):
 
     class Meta(ServiceSerializer.Meta):
         model = GisService
-        fields = ServiceSerializer.Meta.fields
+        fields = [f for f in ServiceSerializer.Meta.fields if f != 'show_on_homepage']
+
+
+class ITSolutionSerializer(ServiceSerializer):
+    explore = serializers.DictField(required=False, allow_null=True)
+
+    class Meta(ServiceSerializer.Meta):
+        model = ITSolution
+        fields = [f for f in ServiceSerializer.Meta.fields if f != 'show_on_homepage']
+
+    def to_internal_value(self, data):
+        data = data.copy()
+        if 'explore' in data and isinstance(data.get('explore'), str):
+            try:
+                parsed = json.loads(data.get('explore'))
+                data['explore'] = parsed
+            except json.JSONDecodeError:
+                data['explore'] = {}
+        return super().to_internal_value(data)
+
+    def validate_explore(self, value):
+        if value in (None, "", {}):
+            return {}
+
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("explore must be an object")
+
+        title = self._clean_text(value.get('title', ''))
+        subsections = value.get('subsections', [])
+
+        if subsections in (None, ""):
+            subsections = []
+
+        if not isinstance(subsections, list):
+            raise serializers.ValidationError("explore.subsections must be an array")
+
+        def normalize_str_list(raw):
+            if raw in (None, ""):
+                return []
+            if isinstance(raw, list):
+                return [self._clean_text(x) for x in raw if self._clean_text(x)]
+            if isinstance(raw, str):
+                text = raw.strip()
+                if text == "":
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [self._clean_text(x) for x in parsed if self._clean_text(x)]
+                except json.JSONDecodeError:
+                    pass
+                parts = []
+                for line in text.split('\n'):
+                    parts.extend([p.strip() for p in line.split(',') if p.strip()])
+                return [self._clean_text(x) for x in parts if self._clean_text(x)]
+            return []
+
+        def normalize_int_list(raw):
+            if raw in (None, ""):
+                return []
+            if isinstance(raw, list):
+                out = []
+                for item in raw:
+                    if isinstance(item, dict) and 'id' in item:
+                        item = item.get('id')
+                    try:
+                        out.append(int(item))
+                    except (ValueError, TypeError):
+                        continue
+                return out
+            if isinstance(raw, str):
+                text = raw.strip()
+                if text == "" or text == "[]":
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    return normalize_int_list(parsed)
+                except json.JSONDecodeError:
+                    out = []
+                    for part in text.strip('[]').split(','):
+                        try:
+                            out.append(int(part.strip()))
+                        except ValueError:
+                            continue
+                    return out
+            return []
+
+        cleaned_subsections = []
+        for subsection in subsections:
+            if subsection in (None, ""):
+                continue
+
+            if isinstance(subsection, str):
+                try:
+                    subsection = json.loads(subsection)
+                except json.JSONDecodeError:
+                    continue
+
+            if not isinstance(subsection, dict):
+                raise serializers.ValidationError("explore.subsections items must be objects")
+
+            has_any = any(v not in (None, "", [], {}) for v in subsection.values())
+            s_title = self._clean_text(subsection.get('title', ''))
+            s_slug = self._clean_text(subsection.get('slug', ''))
+
+            if has_any and not s_title:
+                raise serializers.ValidationError("explore.subsections.title is required")
+            if has_any and not s_slug:
+                raise serializers.ValidationError("explore.subsections.slug is required")
+
+            s_short = self._clean_text(subsection.get('short_description', ''))
+            s_desc = self._clean_text(subsection.get('description', ''))
+
+            s_images = normalize_str_list(subsection.get('images', []))
+            s_tech = normalize_str_list(subsection.get('technologies', []))
+            s_devs = normalize_int_list(subsection.get('developers', []))
+
+            s_use_cases = subsection.get('use_cases', [])
+            if isinstance(s_use_cases, str):
+                try:
+                    parsed_uc = json.loads(s_use_cases)
+                    s_use_cases = parsed_uc if isinstance(parsed_uc, list) else []
+                except json.JSONDecodeError:
+                    s_use_cases = []
+            if not isinstance(s_use_cases, list):
+                s_use_cases = []
+            s_use_cases = self.validate_use_cases(s_use_cases)
+
+            cleaned_subsections.append(
+                {
+                    'title': s_title,
+                    'slug': s_slug,
+                    'short_description': s_short,
+                    'description': s_desc,
+                    'images': s_images,
+                    'technologies': s_tech,
+                    'developers': s_devs,
+                    'use_cases': s_use_cases,
+                }
+            )
+
+        return {
+            'title': title,
+            'subsections': cleaned_subsections,
+        }
 
     def to_internal_value(self, data):
         data = data.copy()
@@ -715,10 +867,14 @@ class ProjectSerializer(serializers.ModelSerializer):
     employee_team_members_data = PublicEmployeeSerializer(source='employee_team_members', many=True, read_only=True)
     project_manager = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
     project_manager_name = serializers.SerializerMethodField()
+    pdf_booklet_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
         fields = "__all__"
+        extra_kwargs = {
+            "pdf_booklet": {"write_only": True, "required": False},
+        }
 
     def get_project_manager_name(self, obj):
         user = getattr(obj, 'project_manager', None)
@@ -728,6 +884,21 @@ class ProjectSerializer(serializers.ModelSerializer):
         last = getattr(user, 'lastname', '') or ''
         full = f"{first} {last}".strip()
         return full or getattr(user, 'username', None)
+
+    def get_pdf_booklet_url(self, obj):
+        """Return the full CDN URL for the PDF booklet, if one has been uploaded."""
+        if not obj.pdf_booklet:
+            return None
+        request = self.context.get("request")
+        try:
+            url = obj.pdf_booklet.url
+            if url.startswith("http"):
+                return url
+            if request:
+                return request.build_absolute_uri(url)
+            return url
+        except Exception:
+            return None
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -1320,3 +1491,11 @@ class CompanyCertificateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyCertificate
         fields = '__all__'
+
+from .models import ContactInquiry
+
+class ContactInquirySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactInquiry
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at']

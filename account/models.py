@@ -92,6 +92,12 @@ class Service(models.Model):
     # Relations
     developers = models.ManyToManyField('TeamMember', blank=True, related_name='services')
     demo_video_url = models.URLField(blank=True, null=True)
+    pdf_booklet = models.FileField(
+        upload_to='service-pdfs/',
+        null=True,
+        blank=True,
+        help_text="Optional PDF booklet for the service (stored in DigitalOcean Spaces / CDN)."
+    )
     
     # Metadata
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
@@ -150,6 +156,12 @@ class GisService(models.Model):
 
     developers = models.ManyToManyField('TeamMember', blank=True, related_name='gis_services')
     demo_video_url = models.URLField(blank=True, null=True)
+    pdf_booklet = models.FileField(
+        upload_to='gisservice-pdfs/',
+        null=True,
+        blank=True,
+        help_text="Optional PDF booklet for the GIS service (stored in DigitalOcean Spaces / CDN)."
+    )
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     sort_order = models.IntegerField(default=0)
@@ -164,6 +176,65 @@ class GisService(models.Model):
         slug_candidate = base_slug
         suffix = 2
         while GisService.objects.filter(slug=slug_candidate).exclude(pk=self.pk).exists():
+            slug_candidate = f"{base_slug}-{suffix}"
+            suffix += 1
+
+        self.slug = slug_candidate
+
+        if not self.id:
+            self.id = self.slug[:50]
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.title
+
+    class Meta:
+        ordering = ['sort_order', 'title']
+
+
+class ITSolution(models.Model):
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+    ]
+
+    id = models.CharField(max_length=50, primary_key=True, blank=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True, db_index=True)
+
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    image = models.ImageField(upload_to='IT-solutions/', blank=True, null=True)
+
+    long_description = models.TextField(blank=True)
+    features = models.JSONField(default=list, blank=True)
+    benefits = models.JSONField(default=list, blank=True)
+    technologies = models.JSONField(default=list, blank=True)
+    use_cases = models.JSONField(default=list, blank=True)
+    explore = models.JSONField(default=dict, blank=True)
+
+    developers = models.ManyToManyField('TeamMember', blank=True, related_name='it_solutions')
+    demo_video_url = models.URLField(blank=True, null=True)
+    pdf_booklet = models.FileField(
+        upload_to='solution-pdfs/',
+        null=True,
+        blank=True,
+        help_text="Optional PDF booklet for the solution (stored in DigitalOcean Spaces / CDN)."
+    )
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        base_slug = slugify(self.slug or self.title or "")[:240]
+        if not base_slug:
+            base_slug = "it-solution"
+
+        slug_candidate = base_slug
+        suffix = 2
+        while ITSolution.objects.filter(slug=slug_candidate).exclude(pk=self.pk).exists():
             slug_candidate = f"{base_slug}-{suffix}"
             suffix += 1
 
@@ -279,6 +350,12 @@ class Project(models.Model):
     icon = models.CharField(max_length=50, default='Briefcase')
     liveUrl = models.URLField(blank=True)  # Changed from live_url
     videoUrl = models.URLField(blank=True)  # Changed from video_url
+    pdf_booklet = models.FileField(
+        upload_to='project-pdfs/',
+        null=True,
+        blank=True,
+        help_text="Optional PDF booklet for the project (stored in DigitalOcean Spaces / CDN)."
+    )
     sortOrder = models.IntegerField(default=0, help_text="Order in which projects appear (lower numbers first)")
     
     # Testimonial fields
@@ -880,3 +957,20 @@ class CompanyCertificate(models.Model):
         return self.name
 
 
+
+class ContactInquiry(models.Model):
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100, blank=True)
+    email = models.EmailField()
+    subject = models.CharField(max_length=255)
+    message = models.TextField()
+    admin_reply = models.TextField(blank=True, help_text="Type a reply here and save to email the user.")
+    replied_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Inquiry from {self.first_name} ({self.email})"
+
+    class Meta:
+        verbose_name_plural = "Contact Inquiries"
+        ordering = ['-created_at']

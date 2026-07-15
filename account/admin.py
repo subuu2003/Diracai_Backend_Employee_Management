@@ -9,6 +9,7 @@ from .models import (
     TeamMember,
     GalleryItem,
     Account,
+    ITSolution,
     UserType,
     UserTitle,
     FutureCustomerContacts,
@@ -21,7 +22,10 @@ from .models import (
     Achievements,
     Address,
     Blog,
-    )
+    ContactInquiry,
+)
+from django.core.mail import send_mail
+from django.utils import timezone
 
 # ---------------------------
 # Product Gallery Inline
@@ -114,6 +118,40 @@ class BlogAdmin(admin.ModelAdmin):
     search_fields = ("title", "excerpt", "content", "category", "author_name")
     prepopulated_fields = {"slug": ("title",)}
 
+
+@admin.register(ContactInquiry)
+class ContactInquiryAdmin(admin.ModelAdmin):
+    list_display = ('first_name', 'email', 'subject', 'created_at', 'replied_at')
+    search_fields = ('first_name', 'last_name', 'email', 'subject')
+    list_filter = ('created_at',)
+    readonly_fields = ('first_name', 'last_name', 'email', 'subject', 'message', 'created_at', 'replied_at')
+    fieldsets = (
+        ('Inquiry Details', {
+            'fields': ('first_name', 'last_name', 'email', 'subject', 'message', 'created_at')
+        }),
+        ('Admin Reply', {
+            'fields': ('admin_reply', 'replied_at'),
+            'description': 'Type your reply here and click save. An email will be sent automatically to the user.'
+        }),
+    )
+
+    def save_model(self, request, obj, form, change):
+        # If admin_reply has changed and is not empty, send an email
+        if 'admin_reply' in form.changed_data and obj.admin_reply:
+            subject = f"Re: {obj.subject}"
+            message = obj.admin_reply
+            from_email = None # Uses DEFAULT_FROM_EMAIL from settings
+            recipient_list = [obj.email]
+            
+            try:
+                send_mail(subject, message, from_email, recipient_list)
+                obj.replied_at = timezone.now()
+            except Exception as e:
+                # In production, you might want to use the messages framework to alert the admin of failure
+                pass
+                
+        super().save_model(request, obj, form, change)
+
 admin.site.register(Account, AccountAdmin)
 
 admin.site.register(UserType)
@@ -127,3 +165,4 @@ admin.site.register(Certificate)
 admin.site.register(EduDegree)
 admin.site.register(Achievements)
 admin.site.register(Address)
+admin.site.register(ITSolution)
