@@ -12,6 +12,7 @@ import uuid
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import Q
+from django.db.models import F
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.renderers import JSONRenderer, BrowsableAPIRenderer
 from .models import Service, GisService, TeamMember, Project, ProjectMembership, GalleryItem, Product, ProductGallery, Testimonial
@@ -1407,7 +1408,7 @@ class ProductAPI(APIView):
                     normalized_strings.append(scalar)
             data[field] = normalized_strings
 
-        serializer = (
+            serializer = (
             ProductSerializer(instance, data=data, partial=True)
             if instance else ProductSerializer(data=data)
         )
@@ -1415,8 +1416,52 @@ class ProductAPI(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        # ----------------------------------
+        # AUTO REORDER PRODUCTS
+        # ----------------------------------
+        validated = serializer.validated_data
+        new_sort = validated.get("sortOrder")
+
+        if instance and new_sort is not None:
+
+            old_sort = instance.sortOrder
+
+            if new_sort != old_sort:
+
+                if new_sort < old_sort:
+
+                    Product.objects.filter(
+                        sortOrder__gte=new_sort,
+                        sortOrder__lt=old_sort
+                    ).exclude(pk=instance.pk).update(
+                        sortOrder=F("sortOrder") + 1
+                    )
+
+                else:
+
+                    Product.objects.filter(
+                        sortOrder__gt=old_sort,
+                        sortOrder__lte=new_sort
+                    ).exclude(pk=instance.pk).update(
+                        sortOrder=F("sortOrder") - 1
+                    )
+
         product = cast(Product, serializer.save())
 
+        # 🔥 IMPORTANT: Handle gallery images
+        if gallery_files:
+            if instance:
+                product.gallery_images.all().delete()
+
+            for img in gallery_files:
+                ProductGallery.objects.create(product=product, image=img)
+
+        product = Product.objects.prefetch_related('gallery_images').get(pk=product.pk)
+
+        return Response(
+            ProductSerializer(product).data,
+            status=200 if instance else 201
+        )
         # 🔥 IMPORTANT: Handle gallery images
         if gallery_files:
             if instance:
