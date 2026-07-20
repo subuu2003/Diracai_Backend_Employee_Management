@@ -12,7 +12,9 @@ import uuid
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import Q
+from django.db import transaction
 from django.db.models import F
+ 
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.renderers import JSONRenderer, BrowsableAPIRenderer
 from .models import Service, GisService, ITSolution, TeamMember, Project, ProjectMembership, GalleryItem, Product, ProductGallery, Testimonial
@@ -1121,7 +1123,9 @@ class ProjectAPI(APIView):
         return [IsAuthenticated()] 
     
     def get(self, request, pk=None):
-        projects = Project.objects.filter(private_project_plan__isnull=True)
+        projects = Project.objects.filter(
+    private_project_plan__isnull=True
+).order_by("sortOrder")
         if pk is not None:
             if request.query_params.get("include_plan") in ("1", "true", "yes"):
                 project = (
@@ -1246,49 +1250,31 @@ class ProjectAPI(APIView):
 
         # Public `/api/projects/` must not accept or return internal employee assignment fields.
         data.pop("employee_team_members", None)
-
         if instance:
-            serializer = ProjectSerializer(instance, data=data, partial=partial, context={"request": request})
+         serializer = ProjectSerializer(
+        instance,
+        data=data,
+        partial=partial,
+        context={"request": request},
+    )
         else:
-            serializer = ProjectSerializer(data=data, context={"request": request})
-        if serializer.is_valid():
-
-         validated = serializer.validated_data
-        new_sort = validated.get("sortOrder")
-
-        if instance and new_sort is not None:
-
-         old_sort = instance.sortOrder
-
-        if new_sort != old_sort:
-
-            if new_sort < old_sort:
-
-                Project.objects.filter(
-                    sortOrder__gte=new_sort,
-                    sortOrder__lt=old_sort
-                ).exclude(pk=instance.pk).update(
-                    sortOrder=F("sortOrder") + 1
-                )
-
-            else:
-
-                Project.objects.filter(
-                    sortOrder__gt=old_sort,
-                    sortOrder__lte=new_sort
-                ).exclude(pk=instance.pk).update(
-                    sortOrder=F("sortOrder") - 1
-                )
-
-        serializer.save()
-
-        return Response(
-        serializer.data,
-        status=status.HTTP_200_OK if instance else status.HTTP_201_CREATED
+         serializer = ProjectSerializer(
+        data=data,
+        context={"request": request},
     )
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if serializer.is_valid():
+         serializer.save()
 
+         return Response(
+        serializer.data,
+        status=status.HTTP_200_OK if instance else status.HTTP_201_CREATED,
+    )
+
+        return Response(
+    serializer.errors,
+    status=status.HTTP_400_BAD_REQUEST,
+)
 class EmployeeProjectsAPI(DebugForce200Mixin, APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     authentication_classes = [QuietJWTAuthentication, SessionAuthentication]

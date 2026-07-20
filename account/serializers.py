@@ -2,6 +2,8 @@ import json
 from rest_framework import serializers
 from django.utils.html import strip_tags
 from django.core.files.uploadedfile import UploadedFile
+from django.db import transaction
+from django.db.models import F
 
 from .models import (
     Testimonial,
@@ -831,6 +833,34 @@ class TeamMemberSerializer(serializers.ModelSerializer):
 
 
 # ======================================================
+def update(self, instance, validated_data):
+    with transaction.atomic():
+
+        new_sort = validated_data.get("sortOrder", instance.sortOrder)
+        old_sort = instance.sortOrder
+
+        if new_sort != old_sort:
+
+            if new_sort < old_sort:
+                Project.objects.filter(
+                    sortOrder__gte=new_sort,
+                    sortOrder__lt=old_sort
+                ).exclude(pk=instance.pk).update(
+                    sortOrder=F("sortOrder") + 1
+                )
+
+            else:
+                Project.objects.filter(
+                    sortOrder__gt=old_sort,
+                    sortOrder__lte=new_sort
+                ).exclude(pk=instance.pk).update(
+                    sortOrder=F("sortOrder") - 1
+                )
+
+        return super().update(instance, validated_data)
+
+def create(self, validated_data):
+    return super().create(validated_data)
 # PROJECT (UNCHANGED)
 # ======================================================
 class ProjectSerializer(serializers.ModelSerializer):
@@ -889,6 +919,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         """Return the full CDN URL for the PDF booklet, if one has been uploaded."""
         if not obj.pdf_booklet:
             return None
+        
         request = self.context.get("request")
         try:
             url = obj.pdf_booklet.url
@@ -899,6 +930,82 @@ class ProjectSerializer(serializers.ModelSerializer):
             return url
         except Exception:
             return None
+
+    @staticmethod
+    def _public_projects_in_display_order():
+        """Return the projects that share the public projects page ordering.
+
+        ``sortOrder`` is stored as a zero-based index, while the admin UI
+        submits a one-based position (Position #1, Position #2, ...).
+        """
+        return Project.objects.filter(
+            private_project_plan__isnull=True
+        ).order_by("sortOrder", "-created_at", "pk")
+
+    @classmethod
+    def _set_public_project_order(cls, projects):
+        """Persist a compact, deterministic zero-based order."""
+        for position, project in enumerate(projects):
+            if project.sortOrder != position:
+                Project.objects.filter(pk=project.pk).update(sortOrder=position)
+                project.sortOrder = position
+
+    @staticmethod
+    def _requested_position_to_index(position, maximum):
+        """Convert the UI's one-based position into a valid list index."""
+        return max(0, min(int(position) - 1, maximum))
+
+    def update(self, instance, validated_data):
+        # A missing sortOrder means this was a regular edit; it must not alter
+        # the order of any project.  When it is supplied, remove the project
+        # from its current spot and insert it at the requested position.
+        requested_position = validated_data.pop("sortOrder", serializers.empty)
+
+        with transaction.atomic():
+            if requested_position is not serializers.empty:
+                ordered_projects = list(
+                    # Filtering private_project_plan__isnull uses a nullable
+                    # outer join. PostgreSQL cannot lock that joined table,
+                    # so explicitly lock only the Project rows.
+                    self._public_projects_in_display_order().select_for_update(of=("self",))
+                )
+
+                # Private projects are not shown in /api/projects/, so their
+                # sort order must not affect a position chosen on that page.
+                if instance in ordered_projects:
+                    ordered_projects.remove(instance)
+                    target = self._requested_position_to_index(
+                        requested_position, len(ordered_projects)
+                    )
+                    ordered_projects.insert(target, instance)
+                    self._set_public_project_order(ordered_projects)
+                else:
+                    # Retain a supplied value for projects outside the public
+                    # list, rather than silently discarding it.
+                    validated_data["sortOrder"] = requested_position
+
+            return super().update(instance, validated_data)
+
+    def create(self, validated_data):
+        # New projects without an explicit position go at the end.  If a
+        # position is selected, insert them there and shift later projects.
+        requested_position = validated_data.pop("sortOrder", serializers.empty)
+
+        with transaction.atomic():
+            ordered_projects = list(
+                self._public_projects_in_display_order().select_for_update(of=("self",))
+            )
+            target = (
+                len(ordered_projects)
+                if requested_position is serializers.empty
+                else self._requested_position_to_index(
+                    requested_position, len(ordered_projects)
+                )
+            )
+            project = super().create({**validated_data, "sortOrder": target})
+            ordered_projects.insert(target, project)
+            self._set_public_project_order(ordered_projects)
+            return project
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
