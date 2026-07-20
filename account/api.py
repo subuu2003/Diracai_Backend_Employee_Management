@@ -1251,13 +1251,43 @@ class ProjectAPI(APIView):
             serializer = ProjectSerializer(instance, data=data, partial=partial, context={"request": request})
         else:
             serializer = ProjectSerializer(data=data, context={"request": request})
-            
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK if instance else status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+         validated = serializer.validated_data
+        new_sort = validated.get("sortOrder")
+
+        if instance and new_sort is not None:
+
+         old_sort = instance.sortOrder
+
+        if new_sort != old_sort:
+
+            if new_sort < old_sort:
+
+                Project.objects.filter(
+                    sortOrder__gte=new_sort,
+                    sortOrder__lt=old_sort
+                ).exclude(pk=instance.pk).update(
+                    sortOrder=F("sortOrder") + 1
+                )
+
+            else:
+
+                Project.objects.filter(
+                    sortOrder__gt=old_sort,
+                    sortOrder__lte=new_sort
+                ).exclude(pk=instance.pk).update(
+                    sortOrder=F("sortOrder") - 1
+                )
+
+        serializer.save()
+
+        return Response(
+        serializer.data,
+        status=status.HTTP_200_OK if instance else status.HTTP_201_CREATED
+    )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class EmployeeProjectsAPI(DebugForce200Mixin, APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -1666,6 +1696,9 @@ class ProductAPI(APIView):
         # ----------------------------------
         validated = serializer.validated_data
         new_sort = validated.get("sortOrder")
+        print("OLD SORT:", instance.sortOrder if instance else None)
+        print("NEW SORT:", new_sort)
+        print("VALIDATED:", validated)
 
         if instance and new_sort is not None:
 
