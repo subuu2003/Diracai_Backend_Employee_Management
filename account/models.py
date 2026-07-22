@@ -955,7 +955,115 @@ class CompanyCertificate(models.Model):
 
     def __str__(self):
         return self.name
+import uuid
 
+class EmployeeCertificate(models.Model):
+
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("issued", "Issued"),
+        ("revoked", "Revoked"),
+    ]
+
+    CERTIFICATE_TYPES = [
+        ("employment", "Employment Certificate"),
+        ("experience", "Experience Certificate"),
+        ("internship", "Internship Completion"),
+        ("training", "Training Certificate"),
+        ("appreciation", "Appreciation Certificate"),
+        ("promotion", "Promotion Certificate"),
+        ("custom", "Custom Certificate"),
+    ]
+
+    employee = models.ForeignKey(
+        EmployeeProfile,
+        on_delete=models.CASCADE,
+        related_name="certificates"
+    )
+
+    certificate_number = models.CharField(
+        max_length=50,
+        unique=True
+    )
+
+    verification_token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
+
+    certificate_type = models.CharField(
+        max_length=30,
+        choices=CERTIFICATE_TYPES,
+        default="employment"
+    )
+
+    issue_date = models.DateField()
+
+    valid_until = models.DateField(
+        blank=True,
+        null=True
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="draft"
+    )
+
+    remarks = models.TextField(
+        blank=True
+    )
+
+    signature = models.ImageField(
+        upload_to="certificate-signatures/",
+        blank=True,
+        null=True
+    )
+
+    stamp = models.ImageField(
+        upload_to="certificate-stamps/",
+        blank=True,
+        null=True
+    )
+
+    created_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="generated_certificates"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.certificate_number:
+            year = timezone.now().year
+
+            last = EmployeeCertificate.objects.filter(
+                certificate_number__startswith=f"DIR-EMP-{year}"
+            ).order_by("-id").first()
+
+            if last:
+                try:
+                    last_number = int(last.certificate_number.split("-")[-1])
+                except (ValueError, IndexError):
+                    last_number = 0
+            else:
+                last_number = 0
+
+            self.certificate_number = f"DIR-EMP-{year}-{last_number + 1:06d}"
+
+        super().save(*args, **kwargs)
+
+    @property
+    def verification_url(self):
+        """Public, unguessable path used to verify this certificate."""
+        return f"/verify/{self.verification_token}/"
+
+    def __str__(self):
+        return f"{self.certificate_number} - {self.employee}"
 
 
 class ContactInquiry(models.Model):

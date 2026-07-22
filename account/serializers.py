@@ -1591,13 +1591,64 @@ class BlogCommentAdminSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
-
-from .models import CompanyCertificate
+from .models import CompanyCertificate, EmployeeCertificate
 
 class CompanyCertificateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyCertificate
         fields = '__all__'
+class EmployeeCertificateSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+    employee_id = serializers.CharField(source="employee.employee_id", read_only=True)
+    position = serializers.CharField(source="employee.designation", read_only=True)
+    verification_url = serializers.ReadOnlyField()
+
+    class Meta:
+        model = EmployeeCertificate
+        fields = "__all__"
+        read_only_fields = (
+            "certificate_number",
+            "verification_token",
+            "created_by",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_employee_name(self, obj):
+        first = obj.employee.user.firstname or ""
+        last = obj.employee.user.lastname or ""
+        full_name = f"{first} {last}".strip()
+
+        if full_name:
+            return full_name
+
+        return obj.employee.user.username
+
+
+class PublicEmployeeCertificateSerializer(serializers.ModelSerializer):
+    """Only exposes information that is safe to show on a public verify page."""
+
+    employee_name = serializers.SerializerMethodField()
+    employee_id = serializers.CharField(source="employee.employee_id", read_only=True)
+    position = serializers.CharField(source="employee.designation", read_only=True)
+
+    class Meta:
+        model = EmployeeCertificate
+        fields = (
+            "certificate_number",
+            "certificate_type",
+            "issue_date",
+            "valid_until",
+            "status",
+            "employee_name",
+            "employee_id",
+            "position",
+        )
+
+    def get_employee_name(self, obj):
+        first = obj.employee.user.firstname or ""
+        last = obj.employee.user.lastname or ""
+        return f"{first} {last}".strip() or obj.employee.user.username
 
 from .models import ContactInquiry
 

@@ -32,6 +32,9 @@ from .api import (
     ContactInquirySubmitAPI,
     ContactInquiryAdminAPI,
     ContactInquiryReplyAPI,
+    EmployeeListAPI,
+    EmployeeCertificateAPI,
+    EmployeeCertificateVerificationAPI,
 )
 from .employee_admin_views import (
     EmployeeDetailAPI,
@@ -213,6 +216,28 @@ urlpatterns = [
     path('api/certificates/<int:pk>/', CompanyCertificateAPI.as_view(), name='certificate-detail'),
     path('api/products/gallery/<int:gallery_pk>/', ProductGalleryAPI.as_view(), name='product-gallery-detail'),
     path('api/products/<int:product_pk>/gallery/', ProductGalleryAPI.as_view(), name='product-specific-gallery'),
+    path(
+    'api/employee-certificates/',
+    EmployeeCertificateAPI.as_view(),
+    name='employee-certificate-list'
+),
+
+
+path(
+    'api/employee-certificates/<int:pk>/',
+    EmployeeCertificateAPI.as_view(),
+    name='employee-certificate-detail'
+),
+path(
+    'api/employee-certificates/verify/<uuid:token>/',
+    EmployeeCertificateVerificationAPI.as_view(),
+    name='employee-certificate-verify'
+),
+path(
+    'api/employees/list/',
+    EmployeeListAPI.as_view(),
+    name='employee-list'
+),
 
     # Contact Inquiries
     path('api/contact/submit/', ContactInquirySubmitAPI.as_view(), name='contact-submit'),

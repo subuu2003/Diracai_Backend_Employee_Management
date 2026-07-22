@@ -17,8 +17,8 @@ from django.db.models import F
  
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.renderers import JSONRenderer, BrowsableAPIRenderer
-from .models import Service, GisService, ITSolution, TeamMember, Project, ProjectMembership, GalleryItem, Product, ProductGallery, Testimonial
-from .serializers import ServiceSerializer, GisServiceSerializer, ITSolutionSerializer, TeamMemberSerializer, ProjectSerializer, ProjectListSerializer, ProjectMembershipSerializer, GalleryItemSerializer, ProductSerializer, ProductGallerySerializer, TestimonialSerializer
+from .models import Service, GisService, ITSolution, TeamMember, Project, ProjectMembership, GalleryItem, Product, ProductGallery, Testimonial, CompanyCertificate, EmployeeCertificate
+from .serializers import ServiceSerializer, GisServiceSerializer, ITSolutionSerializer, TeamMemberSerializer, ProjectSerializer, ProjectListSerializer, ProjectMembershipSerializer, GalleryItemSerializer, ProductSerializer, ProductGallerySerializer, TestimonialSerializer, EmployeeCertificateSerializer, PublicEmployeeCertificateSerializer, CompanyCertificateSerializer
 from account.authentication import QuietJWTAuthentication
 from account.employee_models import EmployeeProfile, CurrentProjectPlan
 from account.employee_serializers import CurrentProjectPlanSerializer, PrivateProjectPlanSerializer
@@ -1851,6 +1851,131 @@ class CompanyCertificateAPI(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
 
 from .serializers import ContactInquirySerializer
+class EmployeeCertificateAPI(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    @staticmethod
+    def _is_admin(user):
+        return bool(
+            getattr(user, "is_admin", False)
+            or getattr(user, "is_staff", False)
+            or getattr(user, "is_superuser", False)
+        )
+
+    def _forbidden_if_not_admin(self, request):
+        if not self._is_admin(request.user):
+            return Response({"detail": "Administrator access is required."}, status=status.HTTP_403_FORBIDDEN)
+        return None
+
+    def get(self, request, pk=None):
+        forbidden = self._forbidden_if_not_admin(request)
+        if forbidden:
+            return forbidden
+        if pk:
+            try:
+                certificate = EmployeeCertificate.objects.get(pk=pk)
+                serializer = EmployeeCertificateSerializer(certificate)
+                return Response(serializer.data)
+            except EmployeeCertificate.DoesNotExist:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+
+        certificates = EmployeeCertificate.objects.all().order_by("-created_at")
+        serializer = EmployeeCertificateSerializer(certificates, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        forbidden = self._forbidden_if_not_admin(request)
+        if forbidden:
+            return forbidden
+        serializer = EmployeeCertificateSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(created_by=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, pk):
+        forbidden = self._forbidden_if_not_admin(request)
+        if forbidden:
+            return forbidden
+        try:
+            certificate = EmployeeCertificate.objects.get(pk=pk)
+        except EmployeeCertificate.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        serializer = EmployeeCertificateSerializer(
+            certificate,
+            data=request.data,
+            partial=True
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        forbidden = self._forbidden_if_not_admin(request)
+        if forbidden:
+            return forbidden
+        try:
+            certificate = EmployeeCertificate.objects.get(pk=pk)
+            certificate.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except EmployeeCertificate.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+
+class EmployeeCertificateVerificationAPI(APIView):
+    """Public endpoint used by a certificate verification link or QR code."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, token):
+        try:
+            certificate = EmployeeCertificate.objects.select_related("employee__user").get(
+                verification_token=token
+            )
+        except EmployeeCertificate.DoesNotExist:
+            return Response(
+                {"verified": False, "detail": "Certificate not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = PublicEmployeeCertificateSerializer(certificate)
+        return Response(
+            {
+                "verified": certificate.status == "issued",
+                "certificate": serializer.data,
+            }
+        )
+
+class EmployeeListAPI(APIView):
+    """Minimal employee list used by the certificate administration form."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not EmployeeCertificateAPI._is_admin(request.user):
+            return Response(
+                {"detail": "Administrator access is required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        employees = EmployeeProfile.objects.select_related("user").all()
+
+        data = [
+            {
+                "id": emp.id,
+                "name": f"{emp.user.firstname} {emp.user.lastname}".strip()
+                or emp.user.username,
+            }
+            for emp in employees
+        ]
+
+        return Response(data)
 
 class ContactInquirySubmitAPI(APIView):
     permission_classes = [] # Open to the public
