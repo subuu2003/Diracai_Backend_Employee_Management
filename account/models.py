@@ -997,6 +997,11 @@ class EmployeeCertificate(models.Model):
         choices=CERTIFICATE_TYPES,
         default="employment"
     )
+    duration = models.CharField(
+    max_length=100,
+    blank=True,
+    null=True
+)
 
     issue_date = models.DateField()
 

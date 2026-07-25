@@ -1614,6 +1614,19 @@ class EmployeeCertificateSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
+    def to_internal_value(self, data):
+        if hasattr(data, "copy"):
+            data = data.copy()
+        elif isinstance(data, dict):
+            data = data.copy()
+
+        if "valid_until" in data and data["valid_until"] == "":
+            data["valid_until"] = None
+        if "duration" in data and data["duration"] == "":
+            data["duration"] = None
+
+        return super().to_internal_value(data)
+
     def get_employee_name(self, obj):
         first = obj.employee.user.firstname or ""
         last = obj.employee.user.lastname or ""
@@ -1637,9 +1650,13 @@ class PublicEmployeeCertificateSerializer(serializers.ModelSerializer):
         fields = (
             "certificate_number",
             "certificate_type",
+            "duration",
             "issue_date",
             "valid_until",
             "status",
+            "remarks",
+            "signature",
+            "stamp",
             "employee_name",
             "employee_id",
             "position",
