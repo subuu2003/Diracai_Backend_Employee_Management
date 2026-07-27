@@ -1010,6 +1010,16 @@ class EmployeeCertificate(models.Model):
         null=True
     )
 
+    internship_start_date = models.DateField(
+        blank=True,
+        null=True
+    )
+
+    internship_end_date = models.DateField(
+        blank=True,
+        null=True
+    )
+
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,

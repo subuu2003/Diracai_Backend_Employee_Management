@@ -1624,6 +1624,10 @@ class EmployeeCertificateSerializer(serializers.ModelSerializer):
             data["valid_until"] = None
         if "duration" in data and data["duration"] == "":
             data["duration"] = None
+        if "internship_start_date" in data and data["internship_start_date"] == "":
+            data["internship_start_date"] = None
+        if "internship_end_date" in data and data["internship_end_date"] == "":
+            data["internship_end_date"] = None
 
         return super().to_internal_value(data)
 
@@ -1653,6 +1657,8 @@ class PublicEmployeeCertificateSerializer(serializers.ModelSerializer):
             "duration",
             "issue_date",
             "valid_until",
+            "internship_start_date",
+            "internship_end_date",
             "status",
             "remarks",
             "signature",
