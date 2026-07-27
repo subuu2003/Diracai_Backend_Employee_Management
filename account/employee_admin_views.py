@@ -242,6 +242,8 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
             "status": request.data.get("status", "active"),
             "private_project": current_project,
         }
+        if request.data.get("employee_id") and str(request.data.get("employee_id")).strip():
+            payload["employee_id"] = str(request.data.get("employee_id")).strip()
         if isinstance(email_value, str) and email_value.strip():
             payload["email"] = email_value.strip()
 
@@ -254,7 +256,7 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
             context={"request": request, "name": name, "password": password},
         )
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_200_OK if settings.DEBUG else status.HTTP_400_BAD_REQUEST)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         try:
             employee = serializer.save()
         except ValidationError as exc:
@@ -334,7 +336,7 @@ class EmployeeDetailAPI(DebugForce200Mixin, APIView):
             password = request.data.get("password", None)
 
             payload = {}
-            for field in ("phone", "designation", "qualification", "employment_type", "location", "status", "private_project", "current_project"):
+            for field in ("employee_id", "phone", "designation", "qualification", "employment_type", "location", "status", "private_project", "current_project"):
                 if field in request.data:
                     payload[field] = request.data.get(field)
 

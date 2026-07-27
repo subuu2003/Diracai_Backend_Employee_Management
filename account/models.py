@@ -969,6 +969,7 @@ class EmployeeCertificate(models.Model):
         ("employment", "Employment Certificate"),
         ("experience", "Experience Certificate"),
         ("internship", "Internship Completion"),
+        ("relieving", "Relieving Certificate"),
         ("training", "Training Certificate"),
         ("appreciation", "Appreciation Certificate"),
         ("promotion", "Promotion Certificate"),

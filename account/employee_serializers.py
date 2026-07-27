@@ -527,7 +527,7 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', required=False)
     login_id = serializers.SerializerMethodField()
     status = serializers.CharField(required=False)
-    employee_id = serializers.CharField(read_only=True)
+    employee_id = serializers.CharField(required=False, allow_blank=True)
     designation = serializers.CharField(required=False, allow_blank=True)
     private_project = serializers.PrimaryKeyRelatedField(
         queryset=apps.get_model("account", "Project").objects.all(),
@@ -689,6 +689,18 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Email/login already registered.')
         return email
 
+    def validate_employee_id(self, value):
+        eid = (value or "").strip()
+        if not eid:
+            return value
+        instance = getattr(self, 'instance', None)
+        qs = EmployeeProfile.objects.filter(employee_id__iexact=eid)
+        if instance:
+            qs = qs.exclude(pk=instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(f"Employee ID '{eid}' is already in use by another employee.")
+        return eid
+
 
     def update(self, instance, validated_data):
         user = getattr(instance, 'user', None)
@@ -758,16 +770,20 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
         user.lastname = last_name
         user.save()
 
-        max_num = 9999
-        for eid in EmployeeProfile.objects.filter(employee_id__startswith="DI").values_list("employee_id", flat=True):
-            s = str(eid or "")
-            digits = s[2:]
-            if digits.isdigit():
-                try:
-                    max_num = max(max_num, int(digits))
-                except Exception:
-                    pass
-        employee_id = f"DI{max_num + 1}"
+        custom_eid = (validated_data.get('employee_id') or '').strip()
+        if custom_eid:
+            employee_id = custom_eid
+        else:
+            max_num = 9999
+            for eid in EmployeeProfile.objects.filter(employee_id__startswith="DI").values_list("employee_id", flat=True):
+                s = str(eid or "")
+                digits = s[2:]
+                if digits.isdigit():
+                    try:
+                        max_num = max(max_num, int(digits))
+                    except Exception:
+                        pass
+            employee_id = f"DI{max_num + 1}"
 
         employee_profile = None
         for _ in range(5):
