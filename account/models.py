@@ -322,6 +322,7 @@ class Project(models.Model):
     start_date = models.DateField(blank=True, null=True)
     end_date = models.DateField(blank=True, null=True)
     image = models.ImageField(upload_to='projects/', blank=True, null=True)
+    banner_image = models.ImageField(upload_to='project-banners/', blank=True, null=True, help_text="Hero background image for project detail page")
     image_url = models.URLField(blank=True)
     
     # CHANGED: Use camelCase for shortDescription

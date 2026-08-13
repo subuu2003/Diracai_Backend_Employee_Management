@@ -58,6 +58,8 @@ class ImageUploadAPI(APIView):
             f"uploads/{uuid.uuid4().hex}-{filename}", file
         )
         url = default_storage.url(saved_path)
+        if url:
+            url = url.split("?")[0]
         absolute_url = request.build_absolute_uri(url)
 
         return Response(
@@ -1246,6 +1248,8 @@ class ProjectAPI(APIView):
         for f in gallery_files:
             file_name = default_storage.save(f'projects/gallery/{f.name}', f)
             file_url = default_storage.url(file_name)
+            if file_url:
+                file_url = file_url.split('?')[0]
             data['gallery'].append(file_url)
 
         # Public `/api/projects/` must not accept or return internal employee assignment fields.

@@ -181,6 +181,8 @@ if ALWAYS_UPLOAD_FILES_TO_AWS:
    AWS_SECRET_ACCESS_KEY='TJi4SulSCtEU5RlHWsKkOpFoL0Qo/qVf5JB6Dcg8rWk'
    AWS_STORAGE_BUCKET_NAME='edrspace'
    AWS_S3_ENDPOINT_URL='https://sgp1.digitaloceanspaces.com'
+   AWS_QUERYSTRING_AUTH = False
+   AWS_DEFAULT_ACL = 'public-read'
    AWS_S3_OBJECT_PARAMETERS = {
       'CacheControl': 'max-age=86400',
    }

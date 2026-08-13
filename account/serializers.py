@@ -53,6 +53,12 @@ class TestimonialSerializer(serializers.ModelSerializer):
             'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if ret.get("image") and isinstance(ret["image"], str):
+            ret["image"] = ret["image"].split("?")[0]
+        return ret
     
     def validate_linkedin(self, value):
         """Validate LinkedIn URL or allow /#"""
@@ -168,7 +174,9 @@ class ServiceSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
 
         if isinstance(rep.get("image"), str):
-            rep["image"] = self._clean_text(rep["image"])
+            rep["image"] = self._clean_text(rep["image"]).split("?")[0]
+        if isinstance(rep.get("pdf_booklet"), str):
+            rep["pdf_booklet"] = rep["pdf_booklet"].split("?")[0]
 
         use_cases = rep.get("use_cases")
         if isinstance(use_cases, list):
@@ -823,6 +831,12 @@ class TeamMemberSerializer(serializers.ModelSerializer):
             "linkedin_url": {"required": False, "allow_null": True},
         }
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if ret.get("image") and isinstance(ret["image"], str):
+            ret["image"] = ret["image"].split("?")[0]
+        return ret
+
     def validate_status(self, value):
         value = value.lower()
         if value == "active":
@@ -891,6 +905,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             return url
 
     image = _ImageFileOrUrlField(required=False, allow_null=True)
+    banner_image = _ImageFileOrUrlField(required=False, allow_null=True)
     team_members = serializers.PrimaryKeyRelatedField(queryset=TeamMember.objects.all(), many=True, required=False)
     team_members_data = TeamMemberSerializer(source='team_members', many=True, read_only=True)
     employee_team_members = serializers.PrimaryKeyRelatedField(queryset=EmployeeProfile.objects.all(), many=True, required=False)
@@ -923,6 +938,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         try:
             url = obj.pdf_booklet.url
+            if url:
+                url = url.split("?")[0]
             if url.startswith("http"):
                 return url
             if request:
@@ -930,6 +947,24 @@ class ProjectSerializer(serializers.ModelSerializer):
             return url
         except Exception:
             return None
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if ret.get("gallery") and isinstance(ret["gallery"], list):
+            cleaned_gallery = []
+            for item in ret["gallery"]:
+                if isinstance(item, str):
+                    cleaned_gallery.append(item.split("?")[0])
+                else:
+                    cleaned_gallery.append(item)
+            ret["gallery"] = cleaned_gallery
+        if ret.get("image") and isinstance(ret["image"], str):
+            ret["image"] = ret["image"].split("?")[0]
+        if ret.get("banner_image") and isinstance(ret["banner_image"], str):
+            ret["banner_image"] = ret["banner_image"].split("?")[0]
+        if ret.get("pdf_booklet_url") and isinstance(ret["pdf_booklet_url"], str):
+            ret["pdf_booklet_url"] = ret["pdf_booklet_url"].split("?")[0]
+        return ret
 
     @staticmethod
     def _public_projects_in_display_order():
@@ -1112,6 +1147,12 @@ class ProductGallerySerializer(serializers.ModelSerializer):
         model = ProductGallery
         fields = ["id", "image", "created_at"]
         read_only_fields = fields
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if ret.get("image") and isinstance(ret["image"], str):
+            ret["image"] = ret["image"].split("?")[0]
+        return ret
 
 
 # ======================================================
@@ -1364,6 +1405,12 @@ class ProductSerializer(serializers.ModelSerializer):
         validated_data.pop("gallery_images", None)
         return super().update(instance, validated_data)
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if ret.get("cover") and isinstance(ret["cover"], str):
+            ret["cover"] = ret["cover"].split("?")[0]
+        return ret
+
      # ============================
 # Blog Serializers (NEW)
 # ============================
@@ -1423,6 +1470,8 @@ class PublicBlogSerializer(serializers.ModelSerializer):
                 avatar_url = ""
         if not avatar_url:
             avatar_url = getattr(obj, "author_avatar_url", "") or ""
+        if avatar_url:
+            avatar_url = avatar_url.split("?")[0]
         return {
             "name": obj.author_name or "",
             "role": obj.author_role or "",
@@ -1430,12 +1479,17 @@ class PublicBlogSerializer(serializers.ModelSerializer):
         }
 
     def get_image(self, obj):
+        url = ""
         if getattr(obj, "banner_image", None):
             try:
-                return obj.banner_image.url
+                url = obj.banner_image.url
             except Exception:
                 pass
-        return getattr(obj, "banner_image_url", "") or ""
+        if not url:
+            url = getattr(obj, "banner_image_url", "") or ""
+        if url:
+            url = url.split("?")[0]
+        return url
 
     def get_date(self, obj):
         # Frontend expects readable string
