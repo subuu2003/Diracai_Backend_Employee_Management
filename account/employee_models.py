@@ -199,6 +199,7 @@ class EmployeeTicket(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        ordering = ['-updated_at', '-id']
         indexes = [
             models.Index(fields=["ticket_number"]),
             models.Index(fields=["status", "priority", "created_at"]),
@@ -214,6 +215,11 @@ class EmployeeTicketAssignmentHistory(models.Model):
     reason = models.TextField(blank=True)
     at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.ticket_id:
+            EmployeeTicket.objects.filter(pk=self.ticket_id).update(updated_at=timezone.now())
+
     class Meta:
         ordering = ['-at']
         indexes = [
@@ -224,15 +230,26 @@ class EmployeeTicketAssignmentHistory(models.Model):
 class EmployeeTicketAttachment(models.Model):
     ticket = models.ForeignKey(EmployeeTicket, on_delete=models.CASCADE, related_name='attachments')
     comment = models.ForeignKey(
-    'EmployeeTicketComment',
-    on_delete=models.CASCADE,
-    null=True,
-    blank=True,
-    related_name='attachments',
-)
+        'EmployeeTicketComment',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='attachments',
+    )
     file = models.FileField(upload_to='employee-ticket-attachments/')
     file_name = models.CharField(max_length=255, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.ticket_id:
+            EmployeeTicket.objects.filter(pk=self.ticket_id).update(updated_at=timezone.now())
+
+    def delete(self, *args, **kwargs):
+        tid = self.ticket_id
+        super().delete(*args, **kwargs)
+        if tid:
+            EmployeeTicket.objects.filter(pk=tid).update(updated_at=timezone.now())
 
     class Meta:
         ordering = ['-uploaded_at']
@@ -244,6 +261,17 @@ class EmployeeTicketComment(models.Model):
     author_employee = models.ForeignKey(EmployeeProfile, on_delete=models.SET_NULL, null=True, blank=True, related_name='ticket_comments')
     text = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.ticket_id:
+            EmployeeTicket.objects.filter(pk=self.ticket_id).update(updated_at=timezone.now())
+
+    def delete(self, *args, **kwargs):
+        tid = self.ticket_id
+        super().delete(*args, **kwargs)
+        if tid:
+            EmployeeTicket.objects.filter(pk=tid).update(updated_at=timezone.now())
 
     class Meta:
         ordering = ['-created_at']

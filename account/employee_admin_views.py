@@ -133,6 +133,9 @@ def _can_access_ticket(user, ticket):
     if not user or not getattr(user, "is_authenticated", False):
         return False
 
+    if getattr(ticket, "created_by_id", None) == user.id:
+        return True
+
     me = getattr(user, "employee_profile", None)
     if not me:
         return False
@@ -145,6 +148,14 @@ def _can_access_ticket(user, ticket):
 
     try:
         if ticket.assignees.filter(id=me.id).exists():
+            return True
+    except Exception:
+        pass
+
+    try:
+        if ticket.private_plan_assignments.filter(employee=me).exists():
+            return True
+        if ticket.plan_assignments.filter(employee=me).exists():
             return True
     except Exception:
         pass
@@ -848,6 +859,7 @@ class EmployeeTicketsAPI(DebugForce200Mixin, APIView):
         priority_param = request.query_params.get("priority")
         search = str(request.query_params.get("search", "")).strip()
         ordering = str(request.query_params.get("ordering", "-created_at")).strip() or "-created_at"
+        ordering = str(request.query_params.get("ordering", "-updated_at")).strip() or "-updated_at"
 
         employee = _resolve_employee(employee_param)
 
@@ -861,6 +873,8 @@ class EmployeeTicketsAPI(DebugForce200Mixin, APIView):
         ).prefetch_related(
             "assignees",
             "assignees__user",
+            "private_plan_assignments__plan__project",
+            "plan_assignments__plan__project",
         ).all()
 
         is_admin = _is_admin(request.user)
@@ -876,12 +890,34 @@ class EmployeeTicketsAPI(DebugForce200Mixin, APIView):
                 return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
             me = request.user.employee_profile
             if assigned_to_param and str(assigned_to_param).strip().lower() == "me":
-                qs = qs.filter(Q(assigned_to=me) | Q(assignees=me)).distinct()
+                qs = qs.filter(
+                    Q(assigned_to=me)
+                    | Q(assignees=me)
+                    | Q(private_plan_assignments__employee=me)
+                    | Q(plan_assignments__employee=me)
+                ).distinct()
             else:
                 if employee and employee.id != me.id:
                     return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-                # Employee views should include owned + reassigned tickets.
-                qs = qs.filter(Q(employee=me) | Q(assigned_to=me) | Q(assignees=me)).distinct()
+                # Employee views should include owned + reassigned tickets + tickets created by this user.
+                qs = qs.filter(
+                    Q(employee=me)
+                    | Q(assigned_to=me)
+                    | Q(assignees=me)
+                    | Q(created_by=request.user)
+                    | Q(private_plan_assignments__employee=me)
+                    | Q(plan_assignments__employee=me)
+                ).distinct()
+
+        created_by_param = request.query_params.get("created_by")
+        if created_by_param:
+            if str(created_by_param).strip().lower() == "me":
+                qs = qs.filter(created_by=request.user)
+            elif is_admin:
+                try:
+                    qs = qs.filter(created_by_id=int(str(created_by_param).strip()))
+                except Exception:
+                    pass
 
         if assigned_to_param and str(assigned_to_param).strip().lower() != "me":
             try:
@@ -942,8 +978,19 @@ class EmployeeTicketsAPI(DebugForce200Mixin, APIView):
         }
         if ordering in allowed_ordering:
             qs = qs.order_by(ordering)
+            if ordering == "-updated_at":
+                qs = qs.order_by("-updated_at", "-id")
+            elif ordering == "updated_at":
+                qs = qs.order_by("updated_at", "id")
+            elif ordering == "-created_at":
+                qs = qs.order_by("-created_at", "-id")
+            elif ordering == "created_at":
+                qs = qs.order_by("created_at", "id")
+            else:
+                qs = qs.order_by(ordering, "-updated_at", "-id")
         else:
             qs = qs.order_by("created_at")
+            qs = qs.order_by("-updated_at", "-id")
 
         paginator = DefaultPageNumberPagination()
         page = paginator.paginate_queryset(qs, request, view=self)
@@ -951,10 +998,23 @@ class EmployeeTicketsAPI(DebugForce200Mixin, APIView):
         return paginator.get_paginated_response(data)
 
     def post(self, request):
-        if not _is_admin(request.user):
+        if not getattr(request.user, "is_authenticated", False):
+            return Response({"detail": "Authentication credentials were not provided."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        is_admin = _is_admin(request.user)
+        is_employee = hasattr(request.user, "employee_profile")
+        if not (is_admin or is_employee):
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
         payload = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+
+        if not is_admin and is_employee:
+            me = request.user.employee_profile
+            # Non-admin employees always create tickets bound to their own profile
+            payload["employee"] = me.id
+            if "assigned_to_id" not in payload and "assigned_to" not in payload and "assignee_ids" not in payload:
+                payload["assigned_to_id"] = me.id
+
         if "assigned_to_id" not in payload:
             if "assigned_to" in payload:
                 assigned = payload.get("assigned_to")

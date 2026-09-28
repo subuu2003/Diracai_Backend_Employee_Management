@@ -1,6 +1,7 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 from account.employee_models import PrivateProjectAssignment
+from account.employee_models import PrivateProjectAssignment, PrivateProjectTicketAssignment
 
 
 class CanAccessPrivateProject(BasePermission):
@@ -28,3 +29,13 @@ class CanAccessPrivateProject(BasePermission):
             return False
 
         return PrivateProjectAssignment.objects.filter(plan__project_id=project_id, employee=employee).exists()
+        if getattr(employee, "private_project_id", None) == project_id:
+            return True
+
+        if PrivateProjectAssignment.objects.filter(plan__project_id=project_id, employee=employee).exists():
+            return True
+
+        if PrivateProjectTicketAssignment.objects.filter(plan__project_id=project_id, employee=employee).exists():
+            return True
+
+        return False

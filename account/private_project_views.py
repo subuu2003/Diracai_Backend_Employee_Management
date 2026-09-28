@@ -55,6 +55,11 @@ def _can_read_project(user, project):
         private_plan = getattr(project, "private_project_plan", None)
         if private_plan and private_plan.assignments.filter(employee=employee).exists():
             return True
+        if private_plan:
+            if private_plan.assignments.filter(employee=employee).exists():
+                return True
+            if private_plan.ticket_assignments.filter(employee=employee).exists():
+                return True
     except Exception:
         pass
     return False
@@ -94,6 +99,7 @@ def _project_queryset_for_user(user):
         if private_project_id:
             q = q | Q(pk=private_project_id)
         q = q | Q(private_project_plan__assignments__employee=employee)
+        q = q | Q(private_project_plan__ticket_assignments__employee=employee)
     return qs.filter(q).distinct()
 
 
@@ -303,28 +309,67 @@ def _private_project_payload(project, request, *, summary=False):
 
     assigned_ids = [a.employee_id for a in getattr(plan, "assignments", []).all()] if plan else []
     assigned_codes = [a.employee.employee_id for a in getattr(plan, "assignments", []).all() if getattr(a, "employee", None)] if plan else []
+    assigned_ids_set = set()
+    assigned_codes_set = set()
+    if plan:
+        for a in getattr(plan, "assignments", []).all():
+            if getattr(a, "employee_id", None):
+                assigned_ids_set.add(a.employee_id)
+            if getattr(a, "employee", None) and getattr(a.employee, "employee_id", None):
+                assigned_codes_set.add(a.employee.employee_id)
+        for ta in getattr(plan, "ticket_assignments", []).all():
+            if getattr(ta, "employee_id", None):
+                assigned_ids_set.add(ta.employee_id)
+            if getattr(ta, "employee", None) and getattr(ta.employee, "employee_id", None):
+                assigned_codes_set.add(ta.employee.employee_id)
+    if project and hasattr(project, "employees"):
+        for de in project.employees.all():
+            assigned_ids_set.add(de.id)
+            if getattr(de, "employee_id", None):
+                assigned_codes_set.add(de.employee_id)
+
+    assigned_ids = list(assigned_ids_set)
+    assigned_codes = list(assigned_codes_set)
 
     project_tickets = []
     if isinstance(plan_data, dict) and plan_data.get("tickets"):
         project_tickets = plan_data.get("tickets") or []
     elif project is not None:
-        private_t_ids = set(
-            PrivateProjectTicketAssignment.objects.filter(plan__project=project).values_list("ticket_id", flat=True)
+        pta_list = list(
+            PrivateProjectTicketAssignment.objects.filter(plan__project=project).select_related("employee", "employee__user")
         )
-        current_t_ids = set(
-            CurrentProjectTicketAssignment.objects.filter(plan__project=project).values_list("ticket_id", flat=True)
+        cta_list = list(
+            CurrentProjectTicketAssignment.objects.filter(plan__project=project).select_related("employee", "employee__user")
         )
-        combined_ids = private_t_ids | current_t_ids
+        all_bridge = pta_list + cta_list
+        combined_ids = {ta.ticket_id for ta in all_bridge if ta.ticket_id}
         if combined_ids:
+            bridge_emps_by_ticket = {}
+            for ta in all_bridge:
+                if ta.ticket_id and ta.employee:
+                    bridge_emps_by_ticket.setdefault(ta.ticket_id, []).append(ta.employee)
+
             from account.employee_models import EmployeeTicket
             t_qs = (
                 EmployeeTicket.objects.filter(pk__in=combined_ids)
-                .select_related("assigned_to", "assigned_to__user")
+                .select_related("assigned_to", "assigned_to__user", "employee", "employee__user")
                 .prefetch_related("assignees", "assignees__user")
-                .order_by("-created_at")
+                .order_by("-updated_at", "-id")
             )
             for t in t_qs:
-                assignees_list = list(t.assignees.all()) or ([t.assigned_to] if t.assigned_to else [])
+                emp_map = {}
+                for e in bridge_emps_by_ticket.get(t.pk, []):
+                    if e and e.id:
+                        emp_map[e.id] = e
+                for e in t.assignees.all():
+                    if e and e.id:
+                        emp_map[e.id] = e
+                if t.assigned_to and t.assigned_to.id:
+                    emp_map[t.assigned_to.id] = t.assigned_to
+
+                assignees_list = list(emp_map.values())
+                assigned_ids = list(emp_map.keys())
+
                 project_tickets.append({
                     "id": t.pk,
                     "ticket_number": t.ticket_number or "",
@@ -332,6 +377,17 @@ def _private_project_payload(project, request, *, summary=False):
                     "description": t.description or "",
                     "status": t.status or "",
                     "priority": t.priority or "",
+                    "employee": {
+                        "id": t.employee.id,
+                        "name": _employee_label(t.employee),
+                        "employee_code": getattr(t.employee, "employee_id", ""),
+                    } if t.employee else None,
+                    "assigned_to": {
+                        "id": t.assigned_to.id,
+                        "name": _employee_label(t.assigned_to),
+                        "employee_code": getattr(t.assigned_to, "employee_id", ""),
+                    } if t.assigned_to else None,
+                    "assigned_employee_ids": assigned_ids,
                     "assignees": [
                         {
                             "id": e.id,
@@ -341,6 +397,7 @@ def _private_project_payload(project, request, *, summary=False):
                         for e in assignees_list
                     ],
                     "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "updated_at": t.updated_at.isoformat() if t.updated_at else (t.created_at.isoformat() if t.created_at else None),
                 })
 
     if summary and isinstance(plan_data, dict):
@@ -415,7 +472,33 @@ class PrivateProjectsAPI(APIView):
         )
         employee = getattr(request.user, "employee_profile", None)
         if employee and not _is_admin(request.user):
-            qs = qs.filter(Q(private_project_plan__assignments__employee=employee)).distinct()
+            emp_q = (
+                Q(private_project_plan__assignments__employee=employee)
+                | Q(private_project_plan__ticket_assignments__employee=employee)
+            )
+            if employee.private_project_id:
+                emp_q = emp_q | Q(pk=employee.private_project_id)
+            qs = qs.filter(emp_q).distinct()
+
+        # Admin filtering by specific employee
+        target_emp_param = request.query_params.get("employee") or request.query_params.get("employee_id")
+        if target_emp_param and _is_admin(request.user):
+            target_emp = None
+            param_str = str(target_emp_param).strip()
+            if param_str.isdigit():
+                target_emp = EmployeeProfile.objects.filter(pk=int(param_str)).first()
+            if not target_emp:
+                target_emp = EmployeeProfile.objects.filter(employee_id=param_str).first()
+            if target_emp:
+                target_q = (
+                    Q(private_project_plan__assignments__employee=target_emp)
+                    | Q(private_project_plan__ticket_assignments__employee=target_emp)
+                )
+                if target_emp.private_project_id:
+                    target_q = target_q | Q(pk=target_emp.private_project_id)
+                qs = qs.filter(target_q).distinct()
+            else:
+                qs = qs.none()
         items = []
         summary = request.query_params.get("summary") in ("1", "true", "yes")
         full = request.query_params.get("full") in ("1", "true", "yes")
@@ -1050,21 +1133,27 @@ class ProjectTicketsAPI(APIView):
         if project is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Collect ticket IDs from both bridge tables (no new FK on EmployeeTicket).
-        private_ticket_ids = set(
+        # Collect ticket IDs and bridge assignments from both bridge tables (no new FK on EmployeeTicket).
+        private_assignments = list(
             PrivateProjectTicketAssignment.objects
             .filter(plan__project=project)
-            .values_list("ticket_id", flat=True)
+            .select_related("employee", "employee__user")
         )
-        current_ticket_ids = set(
+        current_assignments = list(
             CurrentProjectTicketAssignment.objects
             .filter(plan__project=project)
-            .values_list("ticket_id", flat=True)
+            .select_related("employee", "employee__user")
         )
-        all_ticket_ids = private_ticket_ids | current_ticket_ids
+        all_assignments = private_assignments + current_assignments
+        all_ticket_ids = {ta.ticket_id for ta in all_assignments if ta.ticket_id}
 
         if not all_ticket_ids:
             return Response([], status=status.HTTP_200_OK)
+
+        bridge_emps_by_ticket = {}
+        for ta in all_assignments:
+            if ta.ticket_id and ta.employee:
+                bridge_emps_by_ticket.setdefault(ta.ticket_id, []).append(ta.employee)
 
         from account.employee_models import EmployeeTicket
         tickets = (
@@ -1072,8 +1161,23 @@ class ProjectTicketsAPI(APIView):
             .filter(pk__in=all_ticket_ids)
             .select_related("assigned_to", "assigned_to__user", "employee", "employee__user")
             .prefetch_related("assignees", "assignees__user")
-            .order_by("-created_at")
+            .order_by("-updated_at", "-id")
         )
+
+        # Support optional employee filtering
+        employee_param = request.query_params.get("employee") or request.query_params.get("employee_id")
+        target_emp_id = None
+        if employee_param:
+            raw_param = str(employee_param).strip().lower()
+            if raw_param == "me":
+                ep = getattr(request.user, "employee_profile", None)
+                if ep:
+                    target_emp_id = ep.id
+            else:
+                try:
+                    target_emp_id = int(raw_param)
+                except (ValueError, TypeError):
+                    pass
 
         def _employee_label(ep):
             if ep is None:
@@ -1093,21 +1197,30 @@ class ProjectTicketsAPI(APIView):
                 "employee_code": getattr(ep, "employee_id", ""),
             }
 
-        def _assignees(ticket):
-            employees = list(ticket.assignees.all())
-            if not employees and ticket.assigned_to:
-                employees = [ticket.assigned_to]
-            return [
-                {
-                    "id": e.id,
-                    "name": _employee_label(e),
-                    "employee_code": getattr(e, "employee_id", ""),
-                }
-                for e in employees
-            ]
+        data = []
+        for t in tickets:
+            emp_map = {}
+            for e in bridge_emps_by_ticket.get(t.pk, []):
+                if e and e.id:
+                    emp_map[e.id] = e
+            for e in t.assignees.all():
+                if e and e.id:
+                    emp_map[e.id] = e
+            if t.assigned_to and t.assigned_to.id:
+                emp_map[t.assigned_to.id] = t.assigned_to
 
-        data = [
-            {
+            assignees_list = list(emp_map.values())
+            assigned_ids = list(emp_map.keys())
+
+            if target_emp_id is not None:
+                is_linked = (
+                    target_emp_id in assigned_ids
+                    or (t.employee_id is not None and t.employee_id == target_emp_id)
+                )
+                if not is_linked:
+                    continue
+
+            data.append({
                 "id": t.pk,
                 "ticket_number": t.ticket_number or "",
                 "title": t.title or "",
@@ -1116,11 +1229,18 @@ class ProjectTicketsAPI(APIView):
                 "priority": t.priority or "",
                 "employee": _emp_info(t.employee),
                 "assigned_to": _emp_info(t.assigned_to),
-                "assignees": _assignees(t),
+                "assigned_employee_ids": assigned_ids,
+                "assignees": [
+                    {
+                        "id": e.id,
+                        "name": _employee_label(e),
+                        "employee_code": getattr(e, "employee_id", ""),
+                    }
+                    for e in assignees_list
+                ],
                 "created_at": t.created_at.isoformat() if t.created_at else None,
-            }
-            for t in tickets
-        ]
+                "updated_at": t.updated_at.isoformat() if t.updated_at else (t.created_at.isoformat() if t.created_at else None),
+            })
 
         return Response(data, status=status.HTTP_200_OK)
 
