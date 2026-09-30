@@ -883,6 +883,14 @@ class ProjectSerializer(serializers.ModelSerializer):
             if data is None:
                 return None
             if isinstance(data, UploadedFile):
+                import os, time, uuid, re
+                base, ext = os.path.splitext(data.name or "image.jpg")
+                ext = ext or ".jpg"
+                if not ext.startswith("."):
+                    ext = f".{ext}"
+                clean_base = re.sub(r'[^a-zA-Z0-9_-]', '_', base)[:30]
+                unique_suffix = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
+                data.name = f"{clean_base}_{unique_suffix}{ext}"
                 return data
             if isinstance(data, str):
                 cleaned = data.strip().strip("`").strip()

@@ -1248,7 +1248,11 @@ class ProjectAPI(APIView):
         # Handle uploaded gallery files
         gallery_files = request.FILES.getlist('gallery_files')
         for f in gallery_files:
-            file_name = default_storage.save(f'projects/gallery/{f.name}', f)
+            import os, time, uuid, re
+            base, ext = os.path.splitext(f.name or "gallery.jpg")
+            clean_base = re.sub(r'[^a-zA-Z0-9_-]', '_', base)[:30]
+            unique_name = f"{clean_base}_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}"
+            file_name = default_storage.save(f'projects/gallery/{unique_name}', f)
             file_url = default_storage.url(file_name)
             if file_url:
                 file_url = file_url.split('?')[0]

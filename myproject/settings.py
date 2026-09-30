@@ -122,7 +122,7 @@ DATABASES = {
         'USER': 'diracai',
         'PASSWORD': '1234',
         'HOST': '127.0.0.1',   # IMPORTANT
-        'PORT': '5433',
+        'PORT': '5432',
     } 
 }
 # from account.employee_models import EmployeeProfile, EmployeeTicket
@@ -189,6 +189,7 @@ if ALWAYS_UPLOAD_FILES_TO_AWS:
    AWS_S3_ENDPOINT_URL='https://sgp1.digitaloceanspaces.com'
    AWS_QUERYSTRING_AUTH = False
    AWS_DEFAULT_ACL = 'public-read'
+   AWS_S3_FILE_OVERWRITE = False
    AWS_S3_OBJECT_PARAMETERS = {
       'CacheControl': 'max-age=86400',
    }
