@@ -239,6 +239,27 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
 
     def get(self, request):
         qs = EmployeeProfile.objects.select_related("user").all()
+
+        search_param = str(request.query_params.get("search", request.query_params.get("q", "")) or "").strip()
+        if search_param:
+            qs = qs.filter(
+                Q(user__firstname__icontains=search_param)
+                | Q(user__lastname__icontains=search_param)
+                | Q(user__username__icontains=search_param)
+                | Q(user__email__icontains=search_param)
+                | Q(employee_id__icontains=search_param)
+                | Q(phone__icontains=search_param)
+                | Q(designation__icontains=search_param)
+            )
+
+        status_param = str(request.query_params.get("status", "") or "").strip().lower()
+        if status_param and status_param != "all":
+            qs = qs.filter(status=status_param)
+
+        designation_param = str(request.query_params.get("designation", "") or "").strip()
+        if designation_param and designation_param.lower() != "all":
+            qs = qs.filter(designation__iexact=designation_param)
+
         active_param = request.query_params.get("active", request.query_params.get("is_active"))
         can_take = request.query_params.get("can_take_tickets")
         if str(active_param).strip().lower() in {"1", "true", "yes"} or str(can_take).strip().lower() in {"1", "true", "yes"}:
@@ -254,12 +275,30 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
 
         if request.query_params.get("nopaginate") not in ("1", "true", "yes"):
             paginator = DefaultPageNumberPagination()
-            page = paginator.paginate_queryset(qs.order_by("-updated_at"), request)
+            try:
+                page = paginator.paginate_queryset(qs.order_by("-updated_at"), request)
+            except Exception:
+                try:
+                    paginator.page = paginator.django_paginator_class(
+                        qs.order_by("-updated_at"), paginator.get_page_size(request) or 20
+                    ).page(1)
+                    page = list(paginator.page)
+                except Exception:
+                    page = []
             data = serializer_cls(page, many=True, context={"request": request}).data
-            return paginator.get_paginated_response(data)
+            response = paginator.get_paginated_response(data)
+            try:
+                response.data["total_pages"] = paginator.page.paginator.num_pages
+                response.data["current_page"] = paginator.page.number
+                response.data["page_size"] = paginator.get_page_size(request) or 20
+            except Exception:
+                response.data["total_pages"] = 1
+                response.data["current_page"] = 1
+                response.data["page_size"] = 20
+            return response
 
         return Response(
-            serializer_cls(qs, many=True, context={"request": request}).data,
+            serializer_cls(qs.order_by("-updated_at"), many=True, context={"request": request}).data,
             status=status.HTTP_200_OK,
         )
 
@@ -1060,6 +1099,7 @@ class EmployeeTicketDetailAPI(DebugForce200Mixin, APIView):
                     "attachments",
                     "assignment_history",
                     "comments",
+                    "comments__attachments",
                     "comments__author",
                     "comments__author_employee",
                     "comments__author_employee__user",
@@ -1148,56 +1188,64 @@ class EmployeeTicketDetailAPI(DebugForce200Mixin, APIView):
         payload = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
 
         # Preserve the COMPLETE assignee array. Do not collapse it to the first employee.
+        has_assignee_field = False
         if "assignee_ids" in payload:
             raw = payload.get("assignee_ids")
+            has_assignee_field = True
         elif "assigned_to_ids" in payload:
             raw = payload.get("assigned_to_ids")
-            payload["assignee_ids"] = raw
+            has_assignee_field = True
         elif "assignees" in payload:
             raw = payload.get("assignees")
-            payload["assignee_ids"] = raw
+            has_assignee_field = True
         elif "assigned_to_id" in payload:
-            raw = [payload.get("assigned_to_id")]
-            payload["assignee_ids"] = raw
+            raw = payload.get("assigned_to_id")
+            has_assignee_field = True
         elif "assigned_to" in payload:
             raw = payload.get("assigned_to")
-            payload["assignee_ids"] = [raw]
+            has_assignee_field = True
         elif "new_employee_id" in payload:
-            raw = [payload.get("new_employee_id")]
-            payload["assignee_ids"] = raw
+            raw = payload.get("new_employee_id")
+            has_assignee_field = True
         else:
             raw = None
 
-        if raw is not None:
-            if isinstance(raw, str):
-                raw = raw.strip()
-                if raw:
+        if has_assignee_field:
+            if raw is None:
+                normalized_ids = []
+            else:
+                if isinstance(raw, str):
+                    raw = raw.strip()
+                    if raw:
+                        try:
+                            import json
+                            raw = json.loads(raw)
+                        except Exception:
+                            raw = [x.strip() for x in raw.split(",") if x.strip()]
+                    else:
+                        raw = []
+
+                if not isinstance(raw, (list, tuple)):
+                    raw = [raw]
+
+                normalized_ids = []
+                for item in raw:
+                    if isinstance(item, dict):
+                        item = item.get("id") or item.get("employee_id") or item.get("employeeId")
                     try:
-                        import json
-                        raw = json.loads(raw)
-                    except Exception:
-                        raw = [x.strip() for x in raw.split(",") if x.strip()]
-                else:
-                    raw = []
-
-            if not isinstance(raw, (list, tuple)):
-                raw = [raw]
-
-            normalized_ids = []
-            for item in raw:
-                if isinstance(item, dict):
-                    item = item.get("id") or item.get("employee_id") or item.get("employeeId")
-                try:
-                    value = int(item)
-                    if value > 0:
-                        normalized_ids.append(value)
-                except (TypeError, ValueError):
-                    continue
+                        value = int(item)
+                        if value > 0:
+                            normalized_ids.append(value)
+                    except (TypeError, ValueError):
+                        continue
 
             payload["assignee_ids"] = normalized_ids
             # assignee_ids is the canonical write field.
             payload.pop("assigned_to_ids", None)
             payload.pop("assignees", None)
+            payload.pop("assigned_to", None)
+            payload.pop("assigned_to_id", None)
+            payload.pop("new_employee_id", None)
 
         serializer = EmployeeTicketDetailSerializer(
             obj,
@@ -1406,11 +1454,11 @@ class EmployeeTicketCommentsAPI(DebugForce200Mixin, APIView):
         if not ticket:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         if not getattr(request.user, "is_authenticated", False) and settings.DEBUG:
-            qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").order_by("created_at")
+            qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").prefetch_related("attachments").order_by("created_at")
             return Response(EmployeeTicketCommentSerializer(qs, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
         if not _can_access_ticket(request.user, ticket):
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-        qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").order_by("created_at")
+        qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").prefetch_related("attachments").order_by("created_at")
         return Response(EmployeeTicketCommentSerializer(qs, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def post(self, request, pk):
@@ -1428,7 +1476,13 @@ class EmployeeTicketCommentsAPI(DebugForce200Mixin, APIView):
         if not isinstance(text, str) or not text.strip():
             text = ""
 
-        files = request.FILES.getlist("files") or request.FILES.getlist("attachments") or request.FILES.getlist("file")
+        files = []
+        for key in ["files", "attachments", "file", "attachment", "files[]", "attachments[]"]:
+            if key in request.FILES:
+                files.extend(request.FILES.getlist(key))
+        if not files and request.FILES:
+            for key in request.FILES:
+                files.extend(request.FILES.getlist(key))
 
         if not text.strip() and not files:
             return Response({"detail": "text is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1472,11 +1526,11 @@ class EmployeeTicketCommentsFlatAPI(DebugForce200Mixin, APIView):
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
         if not getattr(request.user, "is_authenticated", False) and settings.DEBUG:
-            qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").order_by("created_at")
+            qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").prefetch_related("attachments").order_by("created_at")
             return Response(EmployeeTicketCommentSerializer(qs, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
         if not _can_access_ticket(request.user, ticket):
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-        qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").order_by("created_at")
+        qs = EmployeeTicketComment.objects.filter(ticket=ticket).select_related("author", "author_employee", "author_employee__user").prefetch_related("attachments").order_by("created_at")
         return Response(EmployeeTicketCommentSerializer(qs, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -1499,7 +1553,13 @@ class EmployeeTicketCommentsFlatAPI(DebugForce200Mixin, APIView):
         if not isinstance(text, str) or not text.strip():
             text = ""
 
-        files = request.FILES.getlist("files") or request.FILES.getlist("attachments") or request.FILES.getlist("file")
+        files = []
+        for key in ["files", "attachments", "file", "attachment", "files[]", "attachments[]"]:
+            if key in request.FILES:
+                files.extend(request.FILES.getlist(key))
+        if not files and request.FILES:
+            for key in request.FILES:
+                files.extend(request.FILES.getlist(key))
 
         if not text.strip() and not files:
             return Response({"detail": "text is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1536,7 +1596,7 @@ class EmployeeTicketCommentDetailAPI(DebugForce200Mixin, APIView):
                 "author",
                 "author_employee",
                 "author_employee__user",
-            )
+            ).prefetch_related("attachments")
             if ticket_pk is not None:
                 return qs.get(pk=pk, ticket_id=ticket_pk)
             return qs.get(pk=pk)

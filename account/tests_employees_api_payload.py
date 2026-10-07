@@ -46,6 +46,101 @@ class EmployeesApiPayloadTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(EmployeeProfile.objects.filter(user__email__iexact="emp900@example.com").exists())
 
+    def test_get_employees_paginated_and_metadata(self):
+        self.client.force_authenticate(user=self.admin)
+        for i in range(1, 4):
+            u = User.objects.create_user(
+                username=f"emp_page_{i}",
+                email=f"emp_page_{i}@example.com",
+                phoneno=f"910000000{i}",
+                password="pass",
+            )
+            u.firstname = f"Emp{i}"
+            u.lastname = "Test"
+            u.save()
+            EmployeeProfile.objects.create(
+                user=u,
+                employee_id=f"DI9900{i}",
+                phone=f"910000000{i}",
+                designation="Frontend Developer" if i == 1 else "Backend Developer",
+                status="active" if i < 3 else "inactive",
+            )
+
+        # Page 1 with page_size=2
+        res = self.client.get("/api/employees/?page=1&page_size=2")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("count", data)
+        self.assertGreaterEqual(data["count"], 3)
+        self.assertEqual(len(data["results"]), 2)
+        self.assertEqual(data.get("current_page"), 1)
+        self.assertEqual(data.get("page_size"), 2)
+        self.assertTrue(data.get("total_pages") >= 2)
+        self.assertIsNotNone(data.get("next"))
+
+        # Page 2 with page_size=2
+        res2 = self.client.get("/api/employees/?page=2&page_size=2")
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.json()
+        self.assertEqual(data2.get("current_page"), 2)
+        self.assertIsNotNone(data2.get("previous"))
+
+    def test_get_employees_search_and_filters(self):
+        self.client.force_authenticate(user=self.admin)
+        u1 = User.objects.create_user(
+            username="emp_search_alpha",
+            email="alpha@example.com",
+            phoneno="9200000001",
+            password="pass",
+        )
+        u1.firstname = "Alpha"
+        u1.lastname = "Dev"
+        u1.save()
+        EmployeeProfile.objects.create(
+            user=u1,
+            employee_id="DI_ALPHA",
+            phone="9200000001",
+            designation="Mobile App Developer",
+            status="active",
+        )
+
+        u2 = User.objects.create_user(
+            username="emp_search_beta",
+            email="beta@example.com",
+            phoneno="9200000002",
+            password="pass",
+        )
+        u2.firstname = "Beta"
+        u2.lastname = "Dev"
+        u2.save()
+        EmployeeProfile.objects.create(
+            user=u2,
+            employee_id="DI_BETA",
+            phone="9200000002",
+            designation="Blockchain Developer",
+            status="inactive",
+        )
+
+        # Search by keyword
+        res_search = self.client.get("/api/employees/?search=Alpha")
+        self.assertEqual(res_search.status_code, 200)
+        data_search = res_search.json()
+        self.assertEqual(data_search["count"], 1)
+        self.assertEqual(data_search["results"][0]["employee_id"], "DI_ALPHA")
+
+        # Filter by designation
+        res_desig = self.client.get("/api/employees/?designation=Blockchain Developer")
+        self.assertEqual(res_desig.status_code, 200)
+        data_desig = res_desig.json()
+        self.assertTrue(any(e["employee_id"] == "DI_BETA" for e in data_desig["results"]))
+
+        # Filter by status
+        res_status = self.client.get("/api/employees/?status=inactive&search=Beta")
+        self.assertEqual(res_status.status_code, 200)
+        data_status = res_status.json()
+        self.assertEqual(data_status["count"], 1)
+        self.assertEqual(data_status["results"][0]["employee_id"], "DI_BETA")
+
 
 class EmployeeAdminSerializerIntegrityErrorTests(TestCase):
     @patch("account.employee_serializers.User.objects.create_user")

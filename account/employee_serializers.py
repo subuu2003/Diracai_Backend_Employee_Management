@@ -1257,23 +1257,34 @@ def _ticket_status_from_api(value):
 
 class EmployeeTicketAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
+    url = serializers.SerializerMethodField()
+    file = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeTicketAttachment
-        fields = ['id', 'file_url', 'file_name', 'uploaded_at']
-        read_only_fields = ['id', 'file_url', 'uploaded_at']
+        fields = ['id', 'file', 'file_url', 'url', 'file_name', 'uploaded_at']
+        read_only_fields = ['id', 'file', 'file_url', 'url', 'uploaded_at']
 
     def get_file_url(self, obj):
         request = self.context.get('request')
         if not obj.file:
             return None
-        url = obj.file.url
-        if request:
+        try:
+            url = obj.file.url
+        except Exception:
+            return None
+        if request and isinstance(url, str) and not url.lower().startswith(("http://", "https://")):
             try:
                 return request.build_absolute_uri(url)
             except Exception:
                 return url
         return url
+
+    def get_url(self, obj):
+        return self.get_file_url(obj)
+
+    def get_file(self, obj):
+        return self.get_file_url(obj)
 
 
 class EmployeeTicketCommentSerializer(serializers.ModelSerializer):
@@ -1369,8 +1380,10 @@ class EmployeeTicketCommentSerializer(serializers.ModelSerializer):
         user = getattr(obj, "author", None)
 
         if employee:
+            uid = getattr(user, "id", None) or getattr(employee, "user_id", None) or employee.id
             return {
-                "id": employee.id,
+                "id": uid,
+                "employee_profile_id": employee.id,
                 "name": _employee_label(employee),
                 "email": getattr(
                     getattr(employee, "user", None),

@@ -505,3 +505,66 @@ class EmployeeTicketsAPITests(TestCase):
         self.assertNotIn(ticket_a_id, proj_c_ticket_ids2)
         self.assertNotIn(ticket_b_id, proj_c_ticket_ids2)
 
+    def test_employee_and_admin_comment_attachments(self):
+        # 1. Create a ticket
+        self.client.force_authenticate(user=self.admin)
+        ticket = EmployeeTicket.objects.create(
+            employee=self.employee,
+            title="Ticket with Attachments",
+            description="Testing attachments in comments",
+            created_by=self.admin,
+        )
+
+        # 2. Admin posts comment with attachment via multipart/form-data
+        admin_file = SimpleUploadedFile("admin_doc.txt", b"Admin report contents", content_type="text/plain")
+        res_admin_comment = self.client.post(
+            f"/api/employee-tickets/{ticket.id}/comments/",
+            data={"text": "Admin comment with doc", "files": admin_file},
+            format="multipart",
+        )
+        self.assertEqual(res_admin_comment.status_code, 201)
+        admin_comment_data = res_admin_comment.json()
+        self.assertEqual(admin_comment_data.get("text"), "Admin comment with doc")
+        self.assertTrue(len(admin_comment_data.get("attachments", [])) == 1)
+        att = admin_comment_data["attachments"][0]
+        self.assertEqual(att.get("file_name"), "admin_doc.txt")
+        self.assertTrue(bool(att.get("url") or att.get("file_url") or att.get("file")))
+
+        # 3. Employee posts comment with attachment via multipart/form-data
+        self.client.force_authenticate(user=self.emp_user)
+        emp_file = SimpleUploadedFile("emp_screenshot.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", content_type="image/png")
+        res_emp_comment = self.client.post(
+            f"/api/employee-tickets/{ticket.id}/comments/",
+            data={"text": "Employee response with screenshot", "files": emp_file},
+            format="multipart",
+        )
+        self.assertEqual(res_emp_comment.status_code, 201)
+        emp_comment_data = res_emp_comment.json()
+        self.assertEqual(emp_comment_data.get("text"), "Employee response with screenshot")
+        self.assertTrue(len(emp_comment_data.get("attachments", [])) == 1)
+        emp_att = emp_comment_data["attachments"][0]
+        self.assertEqual(emp_att.get("file_name"), "emp_screenshot.png")
+        self.assertTrue(bool(emp_att.get("url") or emp_att.get("file_url") or emp_att.get("file")))
+
+        # 4. Employee fetches ticket details - both comments and their attachments must be present!
+        res_detail_emp = self.client.get(f"/api/employee-tickets/{ticket.id}/")
+        self.assertEqual(res_detail_emp.status_code, 200)
+        detail_data = res_detail_emp.json()
+        comments = detail_data.get("comments", [])
+        self.assertEqual(len(comments), 2)
+        # Note: EmployeeTicketComment model default ordering is ['-created_at'] (latest first)
+        self.assertEqual(len(comments[0].get("attachments", [])), 1)
+        self.assertEqual(comments[0]["attachments"][0]["file_name"], "emp_screenshot.png")
+        self.assertEqual(len(comments[1].get("attachments", [])), 1)
+        self.assertEqual(comments[1]["attachments"][0]["file_name"], "admin_doc.txt")
+
+        # 5. Admin fetches comments list via /api/employee-tickets/<id>/comments/ (ordered by created_at ascending)
+        self.client.force_authenticate(user=self.admin)
+        res_comments_admin = self.client.get(f"/api/employee-tickets/{ticket.id}/comments/")
+        self.assertEqual(res_comments_admin.status_code, 200)
+        comments_list = res_comments_admin.json()
+        self.assertEqual(len(comments_list), 2)
+        self.assertEqual(comments_list[0]["attachments"][0]["file_name"], "admin_doc.txt")
+        self.assertEqual(comments_list[1]["attachments"][0]["file_name"], "emp_screenshot.png")
+
+
