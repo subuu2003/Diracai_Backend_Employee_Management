@@ -30,6 +30,7 @@ from account.employee_models import (
     EmployeeTicketAssignmentHistory,
     EmployeeTicketAttachment,
     EmployeeTicketComment,
+    DailyReport,
 )
 from account.models import Project
 from account.employee_serializers import (
@@ -46,6 +47,7 @@ from account.employee_serializers import (
     _ticket_status_from_api,
     LeaveRequestSerializer,
     OvertimeRequestSerializer,
+    DailyReportSerializer,
 )
 
 
@@ -1047,22 +1049,82 @@ class EmployeeTicketsAPI(DebugForce200Mixin, APIView):
 
         payload = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
 
+        raw_project_id = payload.get("project_id")
+        if raw_project_id is None:
+            raw_project_id = payload.get("projectId")
+        if raw_project_id is None:
+            raw_project_id = payload.get("project")
+
+        if raw_project_id in (None, "", "null", 0, "0"):
+            raw_project_id = None
+
         if not is_admin and is_employee:
             me = request.user.employee_profile
             # Non-admin employees always create tickets bound to their own profile
             payload["employee"] = me.id
-            if "assigned_to_id" not in payload and "assigned_to" not in payload and "assignee_ids" not in payload:
-                payload["assigned_to_id"] = me.id
+            payload["assigned_to_id"] = me.id
+            payload["assignee_ids"] = [me.id]
+            payload.pop("assigned_to", None)
+            payload.pop("new_employee_id", None)
 
-        if "assigned_to_id" not in payload:
-            if "assigned_to" in payload:
-                assigned = payload.get("assigned_to")
-                if isinstance(assigned, dict):
-                    payload["assigned_to_id"] = assigned.get("id")
-                else:
-                    payload["assigned_to_id"] = assigned
-            elif "new_employee_id" in payload:
-                payload["assigned_to_id"] = payload.get("new_employee_id")
+            if raw_project_id is not None:
+                try:
+                    pid = int(raw_project_id)
+                except (ValueError, TypeError):
+                    return Response(
+                        {"project_id": ["Invalid project ID."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                from account.employee_models import (
+                    PrivateProjectAssignment,
+                    PrivateProjectTicketAssignment,
+                    CurrentProjectAssignment,
+                    CurrentProjectTicketAssignment,
+                )
+                from account.models import Project
+
+                is_assigned = (
+                    getattr(me, "private_project_id", None) == pid
+                    or Project.objects.filter(pk=pid, employees=me).exists()
+                    or PrivateProjectAssignment.objects.filter(plan__project_id=pid, employee=me).exists()
+                    or PrivateProjectTicketAssignment.objects.filter(plan__project_id=pid, employee=me).exists()
+                    or CurrentProjectAssignment.objects.filter(plan__project_id=pid, employee=me).exists()
+                    or CurrentProjectTicketAssignment.objects.filter(plan__project_id=pid, employee=me).exists()
+                    or Project.objects.filter(pk=pid, project_manager=request.user).exists()
+                )
+                if not is_assigned:
+                    return Response(
+                        {"project_id": ["You are not assigned to this project."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                payload["project_id"] = pid
+            else:
+                payload.pop("project_id", None)
+        else:
+            if raw_project_id is not None:
+                try:
+                    payload["project_id"] = int(raw_project_id)
+                except (ValueError, TypeError):
+                    return Response(
+                        {"project_id": ["Invalid project ID."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            else:
+                payload.pop("project_id", None)
+
+            if "assigned_to_id" not in payload:
+                if "assigned_to" in payload:
+                    assigned = payload.get("assigned_to")
+                    if isinstance(assigned, dict):
+                        payload["assigned_to_id"] = assigned.get("id")
+                    else:
+                        payload["assigned_to_id"] = assigned
+                elif "new_employee_id" in payload:
+                    payload["assigned_to_id"] = payload.get("new_employee_id")
+
+        payload.pop("projectId", None)
+        payload.pop("project", None)
 
         serializer = EmployeeTicketDetailSerializer(data=payload, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -1788,5 +1850,221 @@ class LeaveBalanceAPI(DebugForce200Mixin, APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+import re
+
+
+def _parse_and_validate_tickets(raw_tickets):
+    """
+    Parses ticket inputs (string, list of strings/ints) and validates them
+    against existing EmployeeTicket records.
+    Returns (valid_ticket_queryset_or_list, invalid_token_list).
+    Zero new tickets are created.
+    """
+    if raw_tickets in (None, "", []):
+        return [], []
+
+    tokens = []
+    if isinstance(raw_tickets, str):
+        parts = re.split(r'[,;\s]+', raw_tickets.strip())
+        tokens = [p.strip() for p in parts if p.strip()]
+    elif isinstance(raw_tickets, (list, tuple, set)):
+        for item in raw_tickets:
+            if isinstance(item, dict):
+                val = item.get("id") or item.get("ticket_number") or item.get("ticket_id")
+                if val:
+                    tokens.append(str(val).strip())
+            elif item is not None:
+                val = str(item).strip()
+                if val:
+                    for sub in re.split(r'[,;\s]+', val):
+                        if sub.strip():
+                            tokens.append(sub.strip())
+    else:
+        tokens = [str(raw_tickets).strip()]
+
+    seen = set()
+    deduped_tokens = []
+    for t in tokens:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            deduped_tokens.append(t)
+
+    valid_tickets = []
+    invalid_tokens = []
+
+    for token in deduped_tokens:
+        clean_token = token.lstrip('#').strip()
+        ticket = EmployeeTicket.objects.filter(
+            Q(ticket_number__iexact=token) | Q(ticket_number__iexact=clean_token)
+        ).first()
+        if not ticket and (token.isdigit() or clean_token.isdigit()):
+            pk_val = int(clean_token if clean_token.isdigit() else token)
+            ticket = EmployeeTicket.objects.filter(pk=pk_val).first()
+        if ticket:
+            if ticket not in valid_tickets:
+                valid_tickets.append(ticket)
+        else:
+            invalid_tokens.append(token)
+
+    return valid_tickets, invalid_tokens
+
+
+class DailyReportsAPI(APIView):
+    authentication_classes = [QuietJWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        employee_param = request.query_params.get("employee")
+        month_param = request.query_params.get("month")
+
+        if _is_admin(request.user):
+            if employee_param:
+                employee = _resolve_employee(employee_param)
+                if not employee:
+                    return Response({"detail": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
+                qs = DailyReport.objects.filter(employee=employee)
+            else:
+                qs = DailyReport.objects.all()
+        else:
+            if not hasattr(request.user, "employee_profile"):
+                return Response({"detail": "Employee profile required"}, status=status.HTTP_403_FORBIDDEN)
+            qs = DailyReport.objects.filter(employee=request.user.employee_profile)
+
+        if month_param:
+            qs = qs.filter(date__startswith=month_param.strip())
+
+        qs = qs.select_related("employee", "employee__user").prefetch_related("tickets").order_by("-date", "-created_at")
+
+        serializer = DailyReportSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        if _is_admin(request.user):
+            employee_param = request.data.get("employee") or request.query_params.get("employee")
+            if employee_param:
+                employee = _resolve_employee(employee_param)
+                if not employee:
+                    return Response({"detail": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
+            elif hasattr(request.user, "employee_profile"):
+                employee = request.user.employee_profile
+            else:
+                return Response({"detail": "employee is required for admin submission"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            if not hasattr(request.user, "employee_profile"):
+                return Response({"detail": "Employee profile required"}, status=status.HTTP_403_FORBIDDEN)
+            employee = request.user.employee_profile
+
+        date_val = request.data.get("date")
+        if not date_val:
+            return Response({"detail": "date is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        work_completed = (request.data.get("work_completed") or "").strip()
+        work_in_progress = (request.data.get("work_in_progress") or "").strip()
+        pending_work = (request.data.get("pending_work") or "").strip()
+
+        if not work_completed and not work_in_progress and not pending_work:
+            return Response(
+                {"detail": "At least one work update field (work_completed, work_in_progress, or pending_work) is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        raw_tickets = request.data.get("ticket_ids") or request.data.get("tickets") or request.data.get("ticket_numbers")
+        valid_tickets, invalid_tokens = _parse_and_validate_tickets(raw_tickets)
+
+        if invalid_tokens:
+            return Response(
+                {
+                    "detail": f"Invalid ticket references: {', '.join(invalid_tokens)}. Please mention existing tickets.",
+                    "invalid_tickets": invalid_tokens,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        report = DailyReport.objects.create(
+            employee=employee,
+            date=date_val,
+            work_completed=work_completed,
+            work_in_progress=work_in_progress,
+            pending_work=pending_work,
+        )
+
+        if valid_tickets:
+            report.tickets.set(valid_tickets)
+
+        serializer = DailyReportSerializer(report)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class DailyReportDetailAPI(APIView):
+    authentication_classes = [QuietJWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, pk):
+        try:
+            return DailyReport.objects.select_related("employee", "employee__user").prefetch_related("tickets").get(pk=pk)
+        except DailyReport.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        report = self.get_object(pk)
+        if not report:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _is_admin(request.user):
+            if not hasattr(request.user, "employee_profile") or report.employee_id != request.user.employee_profile.id:
+                return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = DailyReportSerializer(report)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request, pk):
+        report = self.get_object(pk)
+        if not report:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _is_admin(request.user):
+            if not hasattr(request.user, "employee_profile") or report.employee_id != request.user.employee_profile.id:
+                return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        if "date" in request.data:
+            report.date = request.data["date"]
+        if "work_completed" in request.data:
+            report.work_completed = (request.data["work_completed"] or "").strip()
+        if "work_in_progress" in request.data:
+            report.work_in_progress = (request.data["work_in_progress"] or "").strip()
+        if "pending_work" in request.data:
+            report.pending_work = (request.data["pending_work"] or "").strip()
+
+        if "ticket_ids" in request.data or "tickets" in request.data or "ticket_numbers" in request.data:
+            raw_tickets = request.data.get("ticket_ids") or request.data.get("tickets") or request.data.get("ticket_numbers")
+            valid_tickets, invalid_tokens = _parse_and_validate_tickets(raw_tickets)
+            if invalid_tokens:
+                return Response(
+                    {
+                        "detail": f"Invalid ticket references: {', '.join(invalid_tokens)}. Please mention existing tickets.",
+                        "invalid_tickets": invalid_tokens,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            report.tickets.set(valid_tickets)
+
+        report.save()
+        serializer = DailyReportSerializer(report)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        report = self.get_object(pk)
+        if not report:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _is_admin(request.user):
+            if not hasattr(request.user, "employee_profile") or report.employee_id != request.user.employee_profile.id:
+                return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        report.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 

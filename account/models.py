@@ -942,7 +942,7 @@ class BlogComment(models.Model):
         return f"{self.blog_id}:{self.name}"
 
 
-from .employee_models import EmployeeProfile, OTPVerification, LeaveRequest, OvertimeRequest, EmployeeDocument
+from .employee_models import EmployeeProfile, OTPVerification, LeaveRequest, OvertimeRequest, EmployeeDocument, DailyReport
 
 class CompanyCertificate(models.Model):
     name = models.CharField(max_length=255)
@@ -1099,3 +1099,5 @@ class ContactInquiry(models.Model):
     class Meta:
         verbose_name_plural = "Contact Inquiries"
         ordering = ['-created_at']
+
+
