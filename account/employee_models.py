@@ -404,3 +404,34 @@ class CurrentProjectTicketAssignment(models.Model):
     class Meta:
         unique_together = (('plan', 'employee', 'ticket'),)
         ordering = ['-updated_at']
+
+
+
+class DailyReport(models.Model):
+    employee = models.ForeignKey(
+        EmployeeProfile,
+        on_delete=models.CASCADE,
+        related_name="daily_reports",
+    )
+    date = models.DateField(db_index=True)
+    work_completed = models.TextField(blank=True, default="")
+    work_in_progress = models.TextField(blank=True, default="")
+    pending_work = models.TextField(blank=True, default="")
+    tickets = models.ManyToManyField(
+        EmployeeTicket,
+        blank=True,
+        related_name="daily_reports",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+        indexes = [
+            models.Index(fields=["employee", "date"]),
+            models.Index(fields=["date"]),
+        ]
+
+    def __str__(self):
+        return f"Daily Report - {self.employee} - {self.date}"
+

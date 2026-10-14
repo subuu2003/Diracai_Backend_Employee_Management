@@ -567,4 +567,115 @@ class EmployeeTicketsAPITests(TestCase):
         self.assertEqual(comments_list[0]["attachments"][0]["file_name"], "admin_doc.txt")
         self.assertEqual(comments_list[1]["attachments"][0]["file_name"], "emp_screenshot.png")
 
+    def test_employee_standalone_and_project_ticket_creation(self):
+        # Setup another employee and two projects
+        other_user = User.objects.create_user(
+            username="other_emp",
+            email="other_emp@example.com",
+            phoneno="9000000099",
+            password="pass1234",
+        )
+        other_employee = EmployeeProfile.objects.create(
+            user=other_user,
+            employee_id="DI30099",
+            phone="9000000099",
+            status="active",
+        )
+
+        # Project 1: Assigned to self.employee
+        project_assigned = Project.objects.create(title="Assigned Proj", description="Desc", status="ongoing")
+        plan_assigned = PrivateProjectPlan.objects.create(project=project_assigned, project_name="Assigned Proj")
+        PrivateProjectAssignment.objects.create(plan=plan_assigned, employee=self.employee, work="Task")
+
+        # Project 2: Unassigned project (only other_employee is assigned)
+        project_unassigned = Project.objects.create(title="Unassigned Proj", description="Desc", status="ongoing")
+        plan_unassigned = PrivateProjectPlan.objects.create(project=project_unassigned, project_name="Unassigned Proj")
+        PrivateProjectAssignment.objects.create(plan=plan_unassigned, employee=other_employee, work="Task")
+
+        self.client.force_authenticate(user=self.emp_user)
+
+        # 1. Standalone ticket creation: no project provided
+        res_standalone = self.client.post(
+            "/api/employee-tickets/",
+            data={
+                "title": "Standalone Issue",
+                "description": "General task without project",
+                "priority": "low",
+            },
+            format="json",
+        )
+        self.assertEqual(res_standalone.status_code, 201)
+        standalone_data = res_standalone.json()
+        standalone_id = standalone_data["id"]
+        self.assertIsNone(standalone_data.get("project"))
+        self.assertEqual(standalone_data["employee"], self.employee.id)
+
+        # Verify standalone ticket has no bridge assignments
+        self.assertFalse(PrivateProjectTicketAssignment.objects.filter(ticket_id=standalone_id).exists())
+        self.assertFalse(CurrentProjectTicketAssignment.objects.filter(ticket_id=standalone_id).exists())
+
+        # Verify standalone ticket does NOT appear in project tickets endpoint
+        res_assigned_tickets = self.client.get(f"/api/private-projects/{project_assigned.id}/tickets/")
+        self.assertEqual(res_assigned_tickets.status_code, 200)
+        assigned_tickets_data = res_assigned_tickets.json()
+        self.assertFalse(any(t["id"] == standalone_id for t in assigned_tickets_data))
+
+        # 2. Reject ticket creation for unassigned project
+        res_unauthorized = self.client.post(
+            "/api/employee-tickets/",
+            data={
+                "title": "Unauthorized Proj Ticket",
+                "description": "Should fail",
+                "priority": "medium",
+                "project_id": project_unassigned.id,
+            },
+            format="json",
+        )
+        self.assertEqual(res_unauthorized.status_code, 400)
+        self.assertIn("project_id", res_unauthorized.json())
+
+        # 3. Successful project ticket creation for assigned project
+        # Also try to spoof assigned_to to other_employee to verify ownership enforcement
+        res_project_ticket = self.client.post(
+            "/api/employee-tickets/",
+            data={
+                "title": "Project Issue",
+                "description": "Fix bug in assigned project",
+                "priority": "high",
+                "project_id": project_assigned.id,
+                "assigned_to": other_employee.id,
+                "employee": other_employee.id,
+            },
+            format="json",
+        )
+        self.assertEqual(res_project_ticket.status_code, 201)
+        project_ticket_data = res_project_ticket.json()
+        project_ticket_id = project_ticket_data["id"]
+
+        # Verify ownership was enforced to authenticated employee
+        self.assertEqual(project_ticket_data["employee"], self.employee.id)
+        assigned_to_val = project_ticket_data["assigned_to"]
+        assigned_to_id = assigned_to_val["id"] if isinstance(assigned_to_val, dict) else assigned_to_val
+        self.assertEqual(assigned_to_id, self.employee.id)
+
+        # Verify project is linked
+        self.assertIsNotNone(project_ticket_data.get("project"))
+        self.assertEqual(project_ticket_data["project"]["id"], project_assigned.id)
+
+        # Verify bridge assignment was created
+        self.assertTrue(
+            PrivateProjectTicketAssignment.objects.filter(
+                plan=plan_assigned,
+                employee=self.employee,
+                ticket_id=project_ticket_id,
+            ).exists()
+        )
+
+        # Verify project ticket DOES appear in project tickets endpoint
+        res_proj_tickets_after = self.client.get(f"/api/private-projects/{project_assigned.id}/tickets/")
+        self.assertEqual(res_proj_tickets_after.status_code, 200)
+        proj_tickets_list = res_proj_tickets_after.json()
+        self.assertTrue(any(t["id"] == project_ticket_id for t in proj_tickets_list))
+        self.assertFalse(any(t["id"] == standalone_id for t in proj_tickets_list))
+
 

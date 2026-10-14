@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model, authenticate
-from account.employee_models import EmployeeProfile, OTPVerification
+from account.employee_models import EmployeeProfile, OTPVerification,DailyReport,EmployeeTicket
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.files.uploadedfile import UploadedFile
 from django.apps import apps
@@ -71,6 +71,8 @@ class EmployeeProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
     user_name = serializers.SerializerMethodField()
+    name = serializers.SerializerMethodField()
+    email = serializers.CharField(source='user.email', read_only=True)
     designation = serializers.CharField(required=False, allow_blank=True)
     profile_pic = serializers.SerializerMethodField()
     private_project = serializers.SerializerMethodField()
@@ -85,9 +87,12 @@ class EmployeeProfileSerializer(serializers.ModelSerializer):
             'id', 'user_id', 'username', 'employee_id', 'phone', 'designation', 'qualification', 'employment_type', 'location',
             'profile_pic',
             'status', 'is_active', 'has_password', 'private_project', 'private_project_title', 'documents',
-            'user_email', 'user_name', 'created_at', 'updated_at'
+            'user_email', 'user_name', 'name', 'email', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_name(self, obj):
+        return self.get_user_name(obj)
 
     def get_user_name(self, obj):
         first = getattr(obj.user, 'firstname', '') or ''
@@ -1490,7 +1495,11 @@ def _get_ticket_project_data(obj):
         return None
 
     private_assignment = None
-    if hasattr(obj, "private_plan_assignments"):
+    if hasattr(obj, "_prefetched_objects_cache") and "private_plan_assignments" in obj._prefetched_objects_cache:
+        prefetched = obj._prefetched_objects_cache["private_plan_assignments"]
+        if prefetched:
+            private_assignment = prefetched[0]
+    elif hasattr(obj, "private_plan_assignments"):
         private_assignment = (
             obj.private_plan_assignments
             .select_related("plan__project")
@@ -1512,7 +1521,11 @@ def _get_ticket_project_data(obj):
             }
 
     current_assignment = None
-    if hasattr(obj, "plan_assignments"):
+    if hasattr(obj, "_prefetched_objects_cache") and "plan_assignments" in obj._prefetched_objects_cache:
+        prefetched = obj._prefetched_objects_cache["plan_assignments"]
+        if prefetched:
+            current_assignment = prefetched[0]
+    elif hasattr(obj, "plan_assignments"):
         current_assignment = (
             obj.plan_assignments
             .select_related("plan__project")
@@ -1587,13 +1600,19 @@ class EmployeeTicketListSerializer(serializers.ModelSerializer):
         return {"id": e.id, "name": _employee_label(e), "email": getattr(getattr(e, "user", None), "email", "") or "", "employee_code": getattr(e, "employee_id", "")}
 
     def get_assigned_to_ids(self, obj):
-        ids = list(obj.assignees.values_list("id", flat=True))
+        if hasattr(obj, "_prefetched_objects_cache") and "assignees" in obj._prefetched_objects_cache:
+            ids = [e.id for e in obj._prefetched_objects_cache["assignees"]]
+        else:
+            ids = list(obj.assignees.values_list("id", flat=True))
         if not ids and obj.assigned_to_id:
             ids = [obj.assigned_to_id]
         return ids
 
     def get_assignees(self, obj):
-        employees = list(obj.assignees.select_related("user").all())
+        if hasattr(obj, "_prefetched_objects_cache") and "assignees" in obj._prefetched_objects_cache:
+            employees = list(obj._prefetched_objects_cache["assignees"])
+        else:
+            employees = list(obj.assignees.select_related("user").all())
         if not employees and obj.assigned_to:
             employees = [obj.assigned_to]
 
@@ -1845,6 +1864,15 @@ class EmployeeTicketDetailSerializer(serializers.ModelSerializer):
             project_employee_ids = set(
                 plan.assignments.values_list("employee_id", flat=True)
             )
+            project_employee_ids.update(
+                plan.ticket_assignments.values_list("employee_id", flat=True)
+            )
+            project_employee_ids.update(
+                EmployeeProfile.objects.filter(private_project_id=plan.project_id).values_list("id", flat=True)
+            )
+            if getattr(plan, "project", None) and getattr(plan.project, "project_manager_id", None):
+                pm_emp = EmployeeProfile.objects.filter(user_id=plan.project.project_manager_id).values_list("id", flat=True)
+                project_employee_ids.update(pm_emp)
 
             invalid_employees = [
                 employee.id
@@ -2917,6 +2945,56 @@ class CurrentProjectPlanSerializer(serializers.ModelSerializer):
 
         return instance
 
+
+class DailyReportTicketSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeTicket
+        fields = ["id", "ticket_number", "title", "status"]
+        read_only_fields = fields
+
+
+class DailyReportSerializer(serializers.ModelSerializer):
+    employee_id = serializers.IntegerField(
+        source="employee.id",
+        read_only=True,
+    )
+    employee_name = serializers.SerializerMethodField()
+    employee_code = serializers.CharField(
+        source="employee.employee_id",
+        read_only=True,
+    )
+    tickets = DailyReportTicketSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DailyReport
+        fields = [
+            "id",
+            "employee_id",
+            "employee_name",
+            "employee_code",
+            "date",
+            "work_completed",
+            "work_in_progress",
+            "pending_work",
+            "tickets",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "employee_id",
+            "employee_name",
+            "employee_code",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_employee_name(self, obj):
+        user = obj.employee.user
+        first = getattr(user, "firstname", "") or ""
+        last = getattr(user, "lastname", "") or ""
+        full_name = f"{first} {last}".strip()
+        return full_name or getattr(user, "username", "")
 
 
 

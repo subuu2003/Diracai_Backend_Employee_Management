@@ -57,6 +57,8 @@ from .employee_admin_views import (
     LeaveRequestsAPI,
     OvertimeRequestDetailAPI,
     OvertimeRequestsAPI,
+    DailyReportsAPI,
+    DailyReportDetailAPI,
 )
 from .private_project_views import (
     PrivateProjectsAPI,
@@ -155,6 +157,8 @@ urlpatterns = [
     path('api/employee/me/', EmployeeMeAPI.as_view(), name='employee-me'),
     path('api/employees/me', EmployeeMeAPI.as_view(), name='employees-me-noslash'),
     path('api/employees/me/', EmployeeMeAPI.as_view(), name='employees-me'),
+    path('api/employee-profile', EmployeeMeAPI.as_view(), name='employee-profile-noslash'),
+    path('api/employee-profile/', EmployeeMeAPI.as_view(), name='employee-profile'),
     path('api/leave-balance', LeaveBalanceAPI.as_view(), name='leave-balance-noslash'),
     path('api/leave-balance/', LeaveBalanceAPI.as_view(), name='leave-balance'),
 
@@ -289,6 +293,15 @@ path(
 
     path('api/login/', LoginView.as_view(), name='login'),
     path('api/', include(router.urls)),
+
+    path("api/daily-reports/", DailyReportsAPI.as_view(), name="daily-reports"),
+    path("api/daily-reports", DailyReportsAPI.as_view(), name="daily-reports-noslash"),
+    path("api/daily-reports/<int:pk>/", DailyReportDetailAPI.as_view(), name="daily-report-detail"),
+    path("api/daily-reports/<int:pk>", DailyReportDetailAPI.as_view(), name="daily-report-detail-noslash"),
+    path("api/employee-daily-reports/", DailyReportsAPI.as_view(), name="employee-daily-reports"),
+    path("api/employee-daily-reports", DailyReportsAPI.as_view(), name="employee-daily-reports-noslash"),
+    path("api/employee-daily-reports/<int:pk>/", DailyReportDetailAPI.as_view(), name="employee-daily-reports-detail"),
+    path("api/employee-daily-reports/<int:pk>", DailyReportDetailAPI.as_view(), name="employee-daily-reports-detail-noslash"),
 ]
 
 # Add static files
