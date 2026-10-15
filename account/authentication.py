@@ -3,7 +3,14 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 class CookieJWTAuthentication(JWTAuthentication):
     def authenticate(self, request):
-        token = request.COOKIES.get('access_token')
+        # If client explicitly provided an Authorization header, respect it and do not overwrite!
+        if request.META.get('HTTP_AUTHORIZATION'):
+            return None
+        token = (
+            request.COOKIES.get('admin_access_token')
+            or request.COOKIES.get('employee_access_token')
+            or request.COOKIES.get('access_token')
+        )
         if not token:
             return None
         request.META['HTTP_AUTHORIZATION'] = f'Bearer {token}'

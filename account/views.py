@@ -339,8 +339,15 @@ def logout_view(request):
             response = JsonResponse({"detail": "Logged out"}, status=200)
         else:
             response = redirect("home")
-        response.delete_cookie("access_token", path="/")
-        response.delete_cookie("refresh_token", path="/")
+        for cookie_name in (
+            "access_token",
+            "refresh_token",
+            "admin_access_token",
+            "admin_refresh_token",
+            "employee_access_token",
+            "employee_refresh_token",
+        ):
+            response.delete_cookie(cookie_name, path="/", samesite="Lax")
         return response
 
 
