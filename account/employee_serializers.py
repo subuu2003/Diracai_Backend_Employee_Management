@@ -680,6 +680,13 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
                 data["private_project"] = data.get("current_project")
             elif "current_project_id" in data:
                 data["private_project"] = data.get("current_project_id")
+        proj = data.get("private_project")
+        if proj in ("", "null", "None", "undefined", 0, "0", "[object Object]"):
+            data["private_project"] = None
+        elif isinstance(proj, dict) and "id" in proj:
+            data["private_project"] = proj["id"]
+        elif isinstance(proj, str) and proj.isdigit():
+            data["private_project"] = int(proj)
         if 'is_active' in data and 'status' not in data:
             data['status'] = data.get('is_active')
             data.pop('is_active', None)
@@ -702,6 +709,8 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
                 return 'active'
             if v in ('false', '0', 'inactive', 'pending'):
                 return 'inactive'
+            if v in ('on_leave', 'on leave', 'leave'):
+                return 'on_leave'
         return value
 
     def get_name(self, obj):
@@ -821,6 +830,10 @@ class EmployeeAdminSerializer(serializers.ModelSerializer):
                 user.phoneno = phone
             except Exception:
                 pass
+
+        status_val = validated_data.get('status')
+        if status_val:
+            user.is_active = (status_val == 'active')
 
         name = self.context.get('name')
         if isinstance(name, str) and name.strip():

@@ -76,7 +76,15 @@ class DebugForce200Mixin:
 
 
 def _is_admin(user):
-    return bool(user and user.is_authenticated and (user.is_staff or user.is_superuser))
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and (
+            getattr(user, "is_staff", False)
+            or getattr(user, "is_superuser", False)
+            or getattr(user, "is_admin", False)
+        )
+    )
 
 def _can_manage_projects(user):
     if not user or not getattr(user, "is_authenticated", False):
@@ -218,12 +226,17 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def _try_create_document(self, request, employee):
-        file_value = request.data.get("document_file") or request.data.get("file")
+        file_value = (
+            request.data.get("document_file")
+            or request.data.get("file")
+            or request.data.get("documents")
+        )
         if not isinstance(file_value, UploadedFile):
             return None
+        title_val = request.data.get("document_title", request.data.get("title", getattr(file_value, "name", "")))
         doc_payload = {
             "employee": employee.id,
-            "title": request.data.get("document_title", request.data.get("title", "")),
+            "title": title_val,
             "description": request.data.get("document_description", request.data.get("description", "")),
             "document_type": request.data.get("document_type", ""),
             "file": file_value,
@@ -353,6 +366,8 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
             "status": request.data.get("status", "active"),
             "private_project": current_project,
         }
+        if request.data.get("linkedin_url") is not None:
+            payload["linkedin_url"] = request.data.get("linkedin_url")
         if request.data.get("employee_id") and str(request.data.get("employee_id")).strip():
             payload["employee_id"] = str(request.data.get("employee_id")).strip()
         if isinstance(email_value, str) and email_value.strip():
@@ -397,12 +412,17 @@ class EmployeeDetailAPI(DebugForce200Mixin, APIView):
             return None
 
     def _try_create_document(self, request, employee):
-        file_value = request.data.get("document_file") or request.data.get("file")
+        file_value = (
+            request.data.get("document_file")
+            or request.data.get("file")
+            or request.data.get("documents")
+        )
         if not isinstance(file_value, UploadedFile):
             return None
+        title_val = request.data.get("document_title", request.data.get("title", getattr(file_value, "name", "")))
         doc_payload = {
             "employee": employee.id,
-            "title": request.data.get("document_title", request.data.get("title", "")),
+            "title": title_val,
             "description": request.data.get("document_description", request.data.get("description", "")),
             "document_type": request.data.get("document_type", ""),
             "file": file_value,
@@ -447,7 +467,7 @@ class EmployeeDetailAPI(DebugForce200Mixin, APIView):
             password = request.data.get("password", None)
 
             payload = {}
-            for field in ("employee_id", "phone", "designation", "qualification", "employment_type", "location", "status", "private_project", "current_project"):
+            for field in ("employee_id", "phone", "designation", "qualification", "employment_type", "location", "status", "private_project", "current_project", "linkedin_url"):
                 if field in request.data:
                     payload[field] = request.data.get(field)
 
@@ -462,6 +482,10 @@ class EmployeeDetailAPI(DebugForce200Mixin, APIView):
                 or request.data.get("user_email")
                 or request.data.get("userEmail")
             )
+            if not email_value:
+                candidate = request.data.get("login_id")
+                if candidate and "@" in str(candidate):
+                    email_value = candidate
             if email_value is not None:
                 payload["email"] = email_value
 
