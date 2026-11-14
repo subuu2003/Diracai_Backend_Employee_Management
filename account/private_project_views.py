@@ -1,3 +1,5 @@
+import os
+from django.core.validators import URLValidator
 from django.utils import timezone
 from django.db.models import Q
 from django.db import transaction
@@ -19,12 +21,14 @@ from account.employee_models import (
     PrivateProjectTicketAssignment,
     CurrentProjectPlan,
     CurrentProjectTicketAssignment,
+    PrivateProjectAttachment,
 )
 from account.employee_serializers import (
     PrivateProjectPlanSerializer,
     PrivateProjectAssignmentSerializer,
     PrivateProjectDailyUpdateSerializer,
     CurrentProjectPlanSerializer,
+    PrivateProjectAttachmentSerializer,
 )
 from account.models import Project
 from account.pagination import DefaultPageNumberPagination, wants_pagination
@@ -37,6 +41,20 @@ def _is_admin(user):
         and getattr(user, "is_authenticated", False)
         and (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "is_admin", False))
     )
+
+
+def _get_employee_label(ep):
+    if not ep:
+        return ""
+    u = getattr(ep, "user", None)
+    if u:
+        name = f"{getattr(u, 'first_name', '')} {getattr(u, 'last_name', '')}".strip()
+        if name:
+            return name
+        username = getattr(u, "username", "")
+        if username:
+            return username
+    return getattr(ep, "employee_id", "") or str(getattr(ep, "id", ""))
 
 
 def _can_read_project(user, project):
@@ -82,6 +100,29 @@ def _can_write_project(user, project):
     if not m:
         return False
     return getattr(m, "role", None) in {"pm", "lead"}
+
+
+def _is_user_assigned_to_project(user, project):
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if _is_admin(user):
+        return True
+    if getattr(project, "project_manager_id", None) == getattr(user, "id", None):
+        return True
+    employee = getattr(user, "employee_profile", None)
+    if not employee:
+        return False
+    if getattr(employee, "private_project_id", None) == getattr(project, "id", None):
+        return True
+    plan = getattr(project, "private_project_plan", None) or getattr(project, "current_project_plan", None)
+    if plan:
+        if hasattr(plan, "assignments") and plan.assignments.filter(employee=employee).exists():
+            return True
+        if hasattr(plan, "ticket_assignments") and plan.ticket_assignments.filter(employee=employee).exists():
+            return True
+    if hasattr(project, "employees") and project.employees.filter(id=employee.id).exists():
+        return True
+    return False
 
 
 def _project_queryset_for_user(user):
@@ -275,6 +316,12 @@ def _apply_private_assignments(plan, payload, request):
             raise ValidationError({"assignments": f"Invalid employee: {employee_value}"})
 
         instance = PrivateProjectAssignment.objects.filter(plan=plan, employee_id=employee_pk).first()
+        if not instance:
+            emp_check = EmployeeProfile.objects.filter(pk=employee_pk).first()
+            if emp_check and str(getattr(emp_check, "status", "")).lower() != "active":
+                raise ValidationError({"assignments": "Cannot assign inactive employee to project."})
+        if instance and (row_data.get("status") is None or str(row_data.get("status")).strip() == ""):
+            row_data["status"] = instance.status
         serializer = PrivateProjectAssignmentSerializer(
             instance,
             data=row_data,
@@ -379,19 +426,19 @@ def _private_project_payload(project, request, *, summary=False):
                     "priority": t.priority or "",
                     "employee": {
                         "id": t.employee.id,
-                        "name": _employee_label(t.employee),
+                        "name": _get_employee_label(t.employee),
                         "employee_code": getattr(t.employee, "employee_id", ""),
                     } if t.employee else None,
                     "assigned_to": {
                         "id": t.assigned_to.id,
-                        "name": _employee_label(t.assigned_to),
+                        "name": _get_employee_label(t.assigned_to),
                         "employee_code": getattr(t.assigned_to, "employee_id", ""),
                     } if t.assigned_to else None,
                     "assigned_employee_ids": assigned_ids,
                     "assignees": [
                         {
                             "id": e.id,
-                            "name": _employee_label(e),
+                            "name": _get_employee_label(e),
                             "employee_code": getattr(e, "employee_id", ""),
                         }
                         for e in assignees_list
@@ -421,6 +468,13 @@ def _private_project_payload(project, request, *, summary=False):
     if end_date is None:
         end_date = getattr(project, "end_date", None)
 
+    attachments_qs = PrivateProjectAttachment.objects.filter(project=project)
+    attachments_data = PrivateProjectAttachmentSerializer(
+        attachments_qs,
+        many=True,
+        context={"request": request}
+    ).data
+
     return {
         "id": project.id,
         "project_id": project.id,
@@ -448,6 +502,7 @@ def _private_project_payload(project, request, *, summary=False):
         "project_description": project_description,
         "plan": plan_data,
         "tickets": project_tickets,
+        "attachments": attachments_data,
         "assigned_employee_ids": assigned_ids,
         "assigned_employee_codes": assigned_codes,
     }
@@ -1040,9 +1095,18 @@ class PrivateProjectPlanAssignmentsAPI(APIView):
         except Exception:
             return Response({"detail": "Invalid employee"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if str(getattr(employee_obj, "status", "")).lower() != "active":
+            return Response({"detail": "Cannot assign an inactive employee to a project."}, status=status.HTTP_400_BAD_REQUEST)
+
         assignment, _ = PrivateProjectAssignment.objects.get_or_create(plan=plan, employee=employee_obj)
         if not assignment.designation:
             assignment.designation = getattr(employee_obj, "designation", "") or ""
+        if "status" in payload:
+            ser = PrivateProjectAssignmentSerializer()
+            try:
+                payload["status"] = ser.validate_status(payload["status"])
+            except ValidationError as ve:
+                return Response(ve.detail if hasattr(ve, "detail") else {"status": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
         for f in ("designation", "start_date", "end_date", "work", "status", "admin_comment", "employee_comment"):
             if f in payload:
                 setattr(assignment, f, payload.get(f))
@@ -1078,10 +1142,17 @@ class PrivateProjectPlanAssignmentAPI(APIView):
             employee = getattr(getattr(request, "user", None), "employee_profile", None)
             if not employee or assignment.employee_id != getattr(employee, "id", None):
                 return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-            allowed = {"employee_comment"}
+            allowed = {"employee_comment", "status"}
             for k in list(payload.keys()):
                 if k not in allowed:
                     payload.pop(k, None)
+
+        if "status" in payload:
+            ser = PrivateProjectAssignmentSerializer()
+            try:
+                payload["status"] = ser.validate_status(payload["status"])
+            except ValidationError as ve:
+                return Response(ve.detail if hasattr(ve, "detail") else {"status": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
 
         for f in ("designation", "start_date", "end_date", "work", "status", "admin_comment", "employee_comment"):
             if f in payload:
@@ -1279,3 +1350,143 @@ class PrivateProjectDailyUpdatesAPI(APIView):
 
         update = PrivateProjectDailyUpdate.objects.create(assignment=assignment, date=date, text=text)
         return Response(PrivateProjectDailyUpdateSerializer(update, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class PrivateProjectAttachmentsAPI(APIView):
+    authentication_classes = [CookieJWTAuthentication, QuietJWTAuthentication, SessionAuthentication]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_permissions(self):
+        if getattr(self.request, "method", "").upper() == "OPTIONS":
+            return [AllowAny()]
+        return [AllowAny()] if (settings.DEBUG and not getattr(self.request.user, "is_authenticated", False)) else [IsAuthenticated()]
+
+    def get(self, request, pk):
+        project = _project_by_pk(pk)
+        if project is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not (settings.DEBUG and not getattr(request.user, "is_authenticated", False)):
+            if not _can_read_project(request.user, project) and not _is_user_assigned_to_project(request.user, project):
+                return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        attachments = PrivateProjectAttachment.objects.filter(project=project)
+        serializer = PrivateProjectAttachmentSerializer(attachments, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request, pk):
+        project = _project_by_pk(pk)
+        if project is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Enforce that only Admin and assigned Employees can upload or add links
+        if not _is_user_assigned_to_project(request.user, project):
+            return Response(
+                {"detail": "You do not have permission to attach files to this project."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        plan = getattr(project, "private_project_plan", None) or getattr(project, "current_project_plan", None)
+
+        user = request.user if getattr(request.user, "is_authenticated", False) else None
+        uploader_name = ""
+        if user:
+            employee = getattr(user, "employee_profile", None)
+            if employee:
+                uploader_name = _get_employee_label(employee)
+            if not uploader_name:
+                uploader_name = getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "") or "Admin"
+        else:
+            uploader_name = "Admin"
+
+        created_attachments = []
+
+        # 1. Check for file uploads
+        files = request.FILES.getlist("files") or request.FILES.getlist("file")
+        if files:
+            for f in files:
+                ext = os.path.splitext(f.name)[1].lower()
+                if ext in {'.exe', '.bat', '.cmd', '.sh', '.vbs', '.js', '.msi'}:
+                    return Response({"detail": f"File type {ext} is not allowed."}, status=status.HTTP_400_BAD_REQUEST)
+                if f.size > 50 * 1024 * 1024:
+                    return Response({"detail": f"File {f.name} exceeds the 50MB size limit."}, status=status.HTTP_400_BAD_REQUEST)
+
+                attachment = PrivateProjectAttachment.objects.create(
+                    project=project,
+                    plan=plan if isinstance(plan, PrivateProjectPlan) else None,
+                    file=f,
+                    file_name=f.name,
+                    file_size=f.size,
+                    uploaded_by=user,
+                    uploader_name=uploader_name,
+                )
+                created_attachments.append(attachment)
+
+        # 2. Check for link URL
+        link_url = request.data.get("link_url") or request.data.get("url")
+        if link_url and isinstance(link_url, str) and link_url.strip():
+            raw_url = link_url.strip()
+            if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
+                raw_url = "https://" + raw_url
+
+            validator = URLValidator()
+            try:
+                validator(raw_url)
+            except Exception:
+                return Response({"detail": "Invalid URL format."}, status=status.HTTP_400_BAD_REQUEST)
+
+            file_name = (request.data.get("file_name") or request.data.get("title") or "").strip()
+            if not file_name:
+                file_name = raw_url
+
+            attachment = PrivateProjectAttachment.objects.create(
+                project=project,
+                plan=plan if isinstance(plan, PrivateProjectPlan) else None,
+                link_url=raw_url,
+                file_name=file_name,
+                uploaded_by=user,
+                uploader_name=uploader_name,
+            )
+            created_attachments.append(attachment)
+
+        if not created_attachments:
+            return Response({"detail": "No file or link provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Return the updated list of all attachments for this project
+        all_attachments = PrivateProjectAttachment.objects.filter(project=project)
+        serializer = PrivateProjectAttachmentSerializer(all_attachments, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class PrivateProjectAttachmentDetailAPI(APIView):
+    authentication_classes = [CookieJWTAuthentication, QuietJWTAuthentication, SessionAuthentication]
+
+    def get_permissions(self):
+        if getattr(self.request, "method", "").upper() == "OPTIONS":
+            return [AllowAny()]
+        return [AllowAny()] if (settings.DEBUG and not getattr(self.request.user, "is_authenticated", False)) else [IsAuthenticated()]
+
+    def delete(self, request, pk, attachment_id):
+        project = _project_by_pk(pk)
+        if project is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        attachment = PrivateProjectAttachment.objects.filter(project=project, pk=attachment_id).first()
+        if attachment is None:
+            return Response({"detail": "Attachment not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        user = getattr(request, "user", None)
+        is_admin_user = _is_admin(user)
+        is_owner = bool(user and user.is_authenticated and attachment.uploaded_by_id == user.id)
+        is_assigned = _is_user_assigned_to_project(user, project)
+
+        if not is_admin_user and not (is_owner and is_assigned):
+            return Response(
+                {"detail": "You do not have permission to delete this attachment."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        attachment.delete()
+        all_attachments = PrivateProjectAttachment.objects.filter(project=project)
+        serializer = PrivateProjectAttachmentSerializer(all_attachments, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)

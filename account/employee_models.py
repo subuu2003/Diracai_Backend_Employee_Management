@@ -297,9 +297,12 @@ class PrivateProjectPlan(models.Model):
 class PrivateProjectAssignment(models.Model):
     STATUS_CHOICES = [
         ('assigned', 'Assigned'),
+        ('ongoing', 'Ongoing'),
         ('in_progress', 'In Progress'),
         ('review', 'Review'),
         ('completed', 'Completed'),
+        ('on_hold', 'On Hold'),
+        ('on-hold', 'On Hold'),
     ]
 
     plan = models.ForeignKey(PrivateProjectPlan, on_delete=models.CASCADE, related_name='assignments')
@@ -343,6 +346,35 @@ class PrivateProjectTicketAssignment(models.Model):
         ordering = ['-updated_at']
 
 
+class PrivateProjectAttachment(models.Model):
+    project = models.ForeignKey('account.Project', on_delete=models.CASCADE, related_name='work_plan_attachments')
+    plan = models.ForeignKey(PrivateProjectPlan, on_delete=models.CASCADE, related_name='attachments', null=True, blank=True)
+    file = models.FileField(upload_to='project-work-plan-attachments/', null=True, blank=True)
+    file_name = models.CharField(max_length=255, blank=True, default='')
+    file_size = models.BigIntegerField(null=True, blank=True)
+    link_url = models.URLField(max_length=1000, blank=True, default='')
+    uploaded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='uploaded_project_attachments'
+    )
+    uploader_name = models.CharField(max_length=255, blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['uploaded_at', 'id']
+
+    def delete(self, *args, **kwargs):
+        if self.file:
+            try:
+                self.file.delete(save=False)
+            except Exception:
+                pass
+        super().delete(*args, **kwargs)
+
+
 class CurrentProjectPlan(models.Model):
     project = models.OneToOneField('account.Project', on_delete=models.CASCADE, related_name='current_project_plan')
     start_date = models.DateField(blank=True, null=True)
@@ -360,9 +392,12 @@ class CurrentProjectPlan(models.Model):
 class CurrentProjectAssignment(models.Model):
     STATUS_CHOICES = [
         ('assigned', 'Assigned'),
+        ('ongoing', 'Ongoing'),
         ('in_progress', 'In Progress'),
         ('review', 'Review'),
         ('completed', 'Completed'),
+        ('on_hold', 'On Hold'),
+        ('on-hold', 'On Hold'),
     ]
 
     plan = models.ForeignKey(CurrentProjectPlan, on_delete=models.CASCADE, related_name='assignments')

@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.http import FileResponse
 from django.db import transaction, IntegrityError
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -288,14 +288,22 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
         else:
             serializer_cls = PublicEmployeeSerializer if want_full else PublicEmployeeListSerializer
 
+        qs = qs.annotate(
+            is_active_sort=Case(
+                When(status__iexact="active", then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+
         if request.query_params.get("nopaginate") not in ("1", "true", "yes"):
             paginator = DefaultPageNumberPagination()
             try:
-                page = paginator.paginate_queryset(qs.order_by("-updated_at"), request)
+                page = paginator.paginate_queryset(qs.order_by("is_active_sort", "-updated_at", "-id"), request)
             except Exception:
                 try:
                     paginator.page = paginator.django_paginator_class(
-                        qs.order_by("-updated_at"), paginator.get_page_size(request) or 20
+                        qs.order_by("is_active_sort", "-updated_at", "-id"), paginator.get_page_size(request) or 20
                     ).page(1)
                     page = list(paginator.page)
                 except Exception:
@@ -313,7 +321,7 @@ class EmployeesAPI(DebugForce200Mixin, APIView):
             return response
 
         return Response(
-            serializer_cls(qs.order_by("-updated_at"), many=True, context={"request": request}).data,
+            serializer_cls(qs.order_by("is_active_sort", "-updated_at", "-id"), many=True, context={"request": request}).data,
             status=status.HTTP_200_OK,
         )
 
@@ -1436,6 +1444,9 @@ class EmployeeTicketReassignAPI(DebugForce200Mixin, APIView):
         except Exception:
             return Response({"detail": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        if str(getattr(new_assignee, "status", "")).lower() != "active":
+            return Response({"detail": "Cannot reassign ticket to an inactive employee"}, status=status.HTTP_400_BAD_REQUEST)
+
         with transaction.atomic():
             from_employee = obj.assigned_to
             obj.assigned_to = new_assignee
@@ -1486,6 +1497,9 @@ class EmployeeTicketBulkAssignAPI(DebugForce200Mixin, APIView):
         except Exception:
             return Response({"detail": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        if str(getattr(new_assignee, "status", "")).lower() != "active":
+            return Response({"detail": "Cannot assign tickets to an inactive employee"}, status=status.HTTP_400_BAD_REQUEST)
+
         cleaned_ids = []
         for tid in ticket_ids:
             try:
@@ -1497,7 +1511,7 @@ class EmployeeTicketBulkAssignAPI(DebugForce200Mixin, APIView):
 
         updated = 0
         with transaction.atomic():
-            qs = EmployeeTicket.objects.select_for_update().select_related("assigned_to").filter(pk__in=cleaned_ids)
+            qs = EmployeeTicket.objects.select_for_update().filter(pk__in=cleaned_ids)
             for t in qs:
                 from_employee = t.assigned_to
                 if from_employee and from_employee.id == new_assignee.id:

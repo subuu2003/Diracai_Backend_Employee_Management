@@ -1427,6 +1427,8 @@ class ProjectMembershipsAPI(APIView):
                 employee = EmployeeProfile.objects.get(pk=int(str(employee_id).strip()))
             except Exception:
                 continue
+            if str(getattr(employee, "status", "")).lower() != "active":
+                return Response({"detail": "Cannot assign inactive employee to project"}, status=status.HTTP_400_BAD_REQUEST)
             membership, _ = ProjectMembership.objects.get_or_create(project=project, employee=employee)
             membership.role = role if isinstance(role, str) and role else membership.role
             membership.is_active = bool(is_active)

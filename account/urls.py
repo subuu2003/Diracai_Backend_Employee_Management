@@ -68,6 +68,8 @@ from .private_project_views import (
     PrivateProjectPlanAssignmentAPI,
     PrivateProjectDailyUpdatesAPI,
     ProjectTicketsAPI,
+    PrivateProjectAttachmentsAPI,
+    PrivateProjectAttachmentDetailAPI,
 )
 from .dashboard_views import DashboardSummaryAPI
 from rest_framework.routers import DefaultRouter
@@ -210,6 +212,8 @@ urlpatterns = [
     path('api/private-projects/<int:pk>/plan/assignments/', PrivateProjectPlanAssignmentsAPI.as_view(), name='private-projects-plan-assignments'),
     path('api/private-projects/<int:pk>/plan/assignments/<int:assignment_id>/', PrivateProjectPlanAssignmentAPI.as_view(), name='private-projects-plan-assignment'),
     path('api/private-projects/<int:pk>/plan/assignments/<int:assignment_id>/daily-updates/', PrivateProjectDailyUpdatesAPI.as_view(), name='private-projects-plan-daily-updates'),
+    path('api/private-projects/<int:pk>/attachments/', PrivateProjectAttachmentsAPI.as_view(), name='private-projects-attachments'),
+    path('api/private-projects/<int:pk>/attachments/<int:attachment_id>/', PrivateProjectAttachmentDetailAPI.as_view(), name='private-projects-attachment-detail'),
     path('api/dashboard/summary/', DashboardSummaryAPI.as_view(), name='dashboard-summary'),
     
     # Gallery

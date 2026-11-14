@@ -1126,6 +1126,7 @@ from account.employee_models import (
     EmployeeTicketComment,
     EmployeeTicketAssignmentHistory,
     CurrentProjectTicketAssignment,
+    PrivateProjectAttachment,
 )
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
@@ -1765,6 +1766,20 @@ class EmployeeTicketDetailSerializer(serializers.ModelSerializer):
         return _ticket_status_from_api(value)
 
     def validate(self, attrs):
+        for field in ("employee", "assigned_to"):
+            if field in attrs and attrs[field] is not None:
+                emp = attrs[field]
+                if str(getattr(emp, "status", "")).lower() != "active":
+                    raise serializers.ValidationError({
+                        field: "Cannot assign ticket to an inactive employee."
+                    })
+        if "assignees" in attrs and attrs["assignees"]:
+            for emp in attrs["assignees"]:
+                if str(getattr(emp, "status", "")).lower() != "active":
+                    raise serializers.ValidationError({
+                        "assignee_ids": "Cannot assign ticket to an inactive employee."
+                    })
+
         if not self.instance:
             project_id = attrs.get("project_id")
             employee = attrs.get("employee")
@@ -2138,6 +2153,7 @@ class PrivateProjectAssignmentSerializer(serializers.ModelSerializer):
     employee_id = serializers.CharField(source='employee.employee_id', read_only=True)
     name = serializers.SerializerMethodField()
     daily_updates = PrivateProjectDailyUpdateSerializer(many=True, required=False)
+    status = serializers.CharField(required=False)
 
     class Meta:
         model = PrivateProjectAssignment
@@ -2156,6 +2172,27 @@ class PrivateProjectAssignmentSerializer(serializers.ModelSerializer):
             'daily_updates',
         ]
         read_only_fields = ['id', 'employee_id']
+
+    def validate_status(self, value):
+        if not value:
+            return "assigned"
+        raw = str(value).strip().lower()
+        valid_map = {
+            "assigned": "assigned",
+            "ongoing": "ongoing",
+            "active": "ongoing",
+            "in_progress": "in_progress",
+            "in-progress": "in_progress",
+            "review": "review",
+            "completed": "completed",
+            "done": "completed",
+            "on_hold": "on_hold",
+            "on-hold": "on_hold",
+            "paused": "on_hold",
+        }
+        if raw in valid_map:
+            return valid_map[raw]
+        raise serializers.ValidationError(f"Invalid assignment status: {value}")
 
     def get_name(self, obj):
         e = getattr(obj, "employee", None)
@@ -2238,6 +2275,54 @@ class PrivateProjectTicketAssignmentSerializer(serializers.ModelSerializer):
         return _employee_label(employee)
 
 
+class PrivateProjectAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    url = serializers.SerializerMethodField()
+    is_link = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PrivateProjectAttachment
+        fields = [
+            'id',
+            'project',
+            'plan',
+            'file',
+            'file_name',
+            'file_size',
+            'file_url',
+            'url',
+            'link_url',
+            'is_link',
+            'uploaded_by',
+            'uploader_name',
+            'uploaded_at',
+        ]
+        read_only_fields = ['id', 'file_url', 'url', 'is_link', 'uploaded_at']
+
+    def get_is_link(self, obj):
+        return bool(obj.link_url and not obj.file)
+
+    def get_file_url(self, obj):
+        if obj.link_url and not obj.file:
+            return obj.link_url
+        if not obj.file:
+            return None
+        request = self.context.get('request')
+        try:
+            url = obj.file.url
+        except Exception:
+            return None
+        if request and isinstance(url, str) and not url.lower().startswith(("http://", "https://")):
+            try:
+                return request.build_absolute_uri(url)
+            except Exception:
+                return url
+        return url
+
+    def get_url(self, obj):
+        return self.get_file_url(obj)
+
+
 class PrivateProjectPlanSerializer(serializers.ModelSerializer):
     employees = PrivateProjectAssignmentSerializer(
         source="assignments",
@@ -2256,6 +2341,7 @@ class PrivateProjectPlanSerializer(serializers.ModelSerializer):
     )
 
     tickets = serializers.SerializerMethodField()
+    attachments = serializers.SerializerMethodField()
 
     class Meta:
         model = PrivateProjectPlan
@@ -2272,12 +2358,14 @@ class PrivateProjectPlanSerializer(serializers.ModelSerializer):
             "assignments",
             "ticket_assignments",
             "tickets",
+            "attachments",
             "updated_at",
         ]
 
         read_only_fields = [
             "id",
             "tickets",
+            "attachments",
             "updated_at",
         ]
 
@@ -2349,6 +2437,11 @@ class PrivateProjectPlanSerializer(serializers.ModelSerializer):
             })
         return res
 
+    def get_attachments(self, obj):
+        if not obj or not getattr(obj, "project", None):
+            return []
+        attachments_qs = PrivateProjectAttachment.objects.filter(project=obj.project)
+        return PrivateProjectAttachmentSerializer(attachments_qs, many=True, context=self.context).data
 
     def update(self, instance, validated_data):
         assignments_payload = validated_data.pop(
@@ -2658,6 +2751,7 @@ class CurrentProjectAssignmentSerializer(serializers.ModelSerializer):
     employee_id = serializers.CharField(source='employee.employee_id', read_only=True)
     name = serializers.SerializerMethodField()
     daily_updates = CurrentProjectDailyUpdateSerializer(many=True, required=False)
+    status = serializers.CharField(required=False)
 
     class Meta:
         model = CurrentProjectAssignment
@@ -2676,6 +2770,27 @@ class CurrentProjectAssignmentSerializer(serializers.ModelSerializer):
             'daily_updates',
         ]
         read_only_fields = ['id', 'employee_id']
+
+    def validate_status(self, value):
+        if not value:
+            return "assigned"
+        raw = str(value).strip().lower()
+        valid_map = {
+            "assigned": "assigned",
+            "ongoing": "ongoing",
+            "active": "ongoing",
+            "in_progress": "in_progress",
+            "in-progress": "in_progress",
+            "review": "review",
+            "completed": "completed",
+            "done": "completed",
+            "on_hold": "on_hold",
+            "on-hold": "on_hold",
+            "paused": "on_hold",
+        }
+        if raw in valid_map:
+            return valid_map[raw]
+        raise serializers.ValidationError(f"Invalid assignment status: {value}")
 
     def get_name(self, obj):
         e = getattr(obj, "employee", None)
@@ -2731,6 +2846,7 @@ class CurrentProjectPlanSerializer(serializers.ModelSerializer):
     assignments = CurrentProjectAssignmentSerializer(many=True, required=False)
     ticket_assignments = CurrentProjectTicketAssignmentSerializer(many=True, required=False)
     tickets = serializers.SerializerMethodField()
+    attachments = serializers.SerializerMethodField()
 
     class Meta:
         model = CurrentProjectPlan
@@ -2746,9 +2862,16 @@ class CurrentProjectPlanSerializer(serializers.ModelSerializer):
             "assignments",
             "ticket_assignments",
             "tickets",
+            "attachments",
             "updated_at",
         ]
-        read_only_fields = ['id', 'tickets', 'updated_at']
+        read_only_fields = ['id', 'tickets', 'attachments', 'updated_at']
+
+    def get_attachments(self, obj):
+        if not obj or not getattr(obj, "project", None):
+            return []
+        attachments_qs = PrivateProjectAttachment.objects.filter(project=obj.project)
+        return PrivateProjectAttachmentSerializer(attachments_qs, many=True, context=self.context).data
 
     def get_tickets(self, obj):
         if not obj:
