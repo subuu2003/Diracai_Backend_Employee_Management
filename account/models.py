@@ -7,6 +7,7 @@ import datetime
 from django.contrib.postgres.fields import ArrayField
 from django.db.models.signals import m2m_changed
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from django.utils.text import slugify
 # from django.core.validators import URLValidator
@@ -330,6 +331,11 @@ class Project(models.Model):
     client = models.CharField(max_length=200, blank=True)
     technologies = models.JSONField(default=list, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='planned')
+    completion_percentage = models.PositiveIntegerField(
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Project completion percentage (0-100)"
+    )
     timeline = models.CharField(max_length=100, blank=True)
     team = models.CharField(max_length=200, blank=True)
     team_members = models.ManyToManyField(TeamMember, blank=True, related_name='projects')

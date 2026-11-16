@@ -351,6 +351,7 @@ class PrivateProjectAttachment(models.Model):
     plan = models.ForeignKey(PrivateProjectPlan, on_delete=models.CASCADE, related_name='attachments', null=True, blank=True)
     file = models.FileField(upload_to='project-work-plan-attachments/', null=True, blank=True)
     file_name = models.CharField(max_length=255, blank=True, default='')
+    title = models.CharField(max_length=255, blank=True, default='')
     file_size = models.BigIntegerField(null=True, blank=True)
     link_url = models.URLField(max_length=1000, blank=True, default='')
     uploaded_by = models.ForeignKey(

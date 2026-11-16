@@ -2279,6 +2279,7 @@ class PrivateProjectAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     url = serializers.SerializerMethodField()
     is_link = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PrivateProjectAttachment
@@ -2288,6 +2289,8 @@ class PrivateProjectAttachmentSerializer(serializers.ModelSerializer):
             'plan',
             'file',
             'file_name',
+            'title',
+            'display_name',
             'file_size',
             'file_url',
             'url',
@@ -2297,7 +2300,10 @@ class PrivateProjectAttachmentSerializer(serializers.ModelSerializer):
             'uploader_name',
             'uploaded_at',
         ]
-        read_only_fields = ['id', 'file_url', 'url', 'is_link', 'uploaded_at']
+        read_only_fields = ['id', 'file_url', 'url', 'is_link', 'display_name', 'uploaded_at']
+
+    def get_display_name(self, obj):
+        return (getattr(obj, "title", "") or "").strip() or obj.file_name or (obj.link_url if not obj.file else "Attachment")
 
     def get_is_link(self, obj):
         return bool(obj.link_url and not obj.file)
@@ -2342,6 +2348,7 @@ class PrivateProjectPlanSerializer(serializers.ModelSerializer):
 
     tickets = serializers.SerializerMethodField()
     attachments = serializers.SerializerMethodField()
+    completion_percentage = serializers.SerializerMethodField()
 
     class Meta:
         model = PrivateProjectPlan
@@ -2354,6 +2361,7 @@ class PrivateProjectPlanSerializer(serializers.ModelSerializer):
             "timeline",
             "project_name",
             "project_description",
+            "completion_percentage",
             "employees",
             "assignments",
             "ticket_assignments",
@@ -2366,8 +2374,14 @@ class PrivateProjectPlanSerializer(serializers.ModelSerializer):
             "id",
             "tickets",
             "attachments",
+            "completion_percentage",
             "updated_at",
         ]
+
+    def get_completion_percentage(self, obj):
+        if not obj or not getattr(obj, "project", None):
+            return 0
+        return getattr(obj.project, "completion_percentage", 0) or 0
 
     def get_tickets(self, obj):
         if not obj:

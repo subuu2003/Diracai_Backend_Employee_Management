@@ -1063,6 +1063,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
             "description",
             "shortDescription",
             "status",
+            "completion_percentage",
             "timeline",
             "start_date",
             "end_date",

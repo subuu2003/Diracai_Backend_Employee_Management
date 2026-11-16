@@ -275,6 +275,27 @@ def _sync_project_status_from_payload(project, payload, plan_payload=None):
                 project.status = s_val
                 project.save(update_fields=["status"])
 
+    # Manually editable completion percentage (0 - 100)
+    completion_candidate = None
+    if isinstance(plan_payload, dict):
+        completion_candidate = plan_payload.get("completion_percentage")
+        if completion_candidate is None:
+            completion_candidate = plan_payload.get("progress")
+    if completion_candidate is None and isinstance(payload, dict):
+        completion_candidate = payload.get("completion_percentage")
+        if completion_candidate is None:
+            completion_candidate = payload.get("progress")
+    if completion_candidate is not None and str(completion_candidate).strip() != "":
+        try:
+            val = int(completion_candidate)
+        except (ValueError, TypeError):
+            raise ValidationError({"completion_percentage": "Completion percentage must be an integer between 0 and 100."})
+        if val < 0 or val > 100:
+            raise ValidationError({"completion_percentage": "Completion percentage must be between 0 and 100."})
+        if getattr(project, "completion_percentage", None) != val:
+            project.completion_percentage = val
+            project.save(update_fields=["completion_percentage"])
+
 
 def _apply_private_assignments(plan, payload, request):
     assignments_payload = payload.get("assignments")
@@ -475,6 +496,10 @@ def _private_project_payload(project, request, *, summary=False):
         context={"request": request}
     ).data
 
+    comp_pct = getattr(project, "completion_percentage", 0)
+    if comp_pct is None:
+        comp_pct = 0
+
     return {
         "id": project.id,
         "project_id": project.id,
@@ -484,6 +509,8 @@ def _private_project_payload(project, request, *, summary=False):
             "title": getattr(project, "title", "") or "",
             "description": getattr(project, "description", "") or "",
             "status": getattr(project, "status", "") or "",
+            "completion_percentage": comp_pct,
+            "progress": comp_pct,
             "timeline": getattr(project, "timeline", "") or "",
             "start_date": getattr(project, "start_date", None),
             "end_date": getattr(project, "end_date", None),
@@ -494,6 +521,8 @@ def _private_project_payload(project, request, *, summary=False):
 
         # IMPORTANT
         "status": getattr(project, "status", None),
+        "completion_percentage": comp_pct,
+        "progress": comp_pct,
 
         "timeline": timeline,
         "start_date": start_date,
@@ -601,12 +630,25 @@ class PrivateProjectsAPI(APIView):
             if end_date in ("", "null"):
                 end_date = None
 
+            comp_pct_val = 0
+            raw_pct = plan_payload.get("completion_percentage")
+            if raw_pct is None:
+                raw_pct = plan_payload.get("progress")
+            if raw_pct is not None and str(raw_pct).strip() != "":
+                try:
+                    comp_pct_val = int(raw_pct)
+                    if comp_pct_val < 0 or comp_pct_val > 100:
+                        comp_pct_val = 0
+                except (ValueError, TypeError):
+                    comp_pct_val = 0
+
             with transaction.atomic():
                 project = Project.objects.create(
                     title=title[:200],
                     description=description,
                     category="enterprise",
                     status=status_value,
+                    completion_percentage=comp_pct_val,
                     timeline=timeline,
                     start_date=start_date,
                     end_date=end_date,
@@ -882,9 +924,11 @@ class PrivateProjectDetailAPI(APIView):
             )
 
         # ---------------------------------------------------------
-        # Only admin can edit private project plans.
+        # Only admin or assigned employee can edit.
+        # Employee can only update the work plan (project_description).
         # ---------------------------------------------------------
-        if not _is_admin(request.user):
+        is_admin = _is_admin(request.user)
+        if not is_admin and not _is_user_assigned_to_project(request.user, project):
             return Response(
                 {"detail": "Forbidden"},
                 status=status.HTTP_403_FORBIDDEN,
@@ -922,6 +966,26 @@ class PrivateProjectDetailAPI(APIView):
                     "description",
                     "",
                 ) or "",
+            )
+
+        if not is_admin:
+            new_desc = plan_payload.get("project_description")
+            if new_desc is None:
+                new_desc = plan_payload.get("description")
+            if new_desc is not None:
+                plan.project_description = str(new_desc).strip()
+                plan.save(update_fields=["project_description", "updated_at"])
+                if hasattr(project, "description"):
+                    project.description = plan.project_description
+                    project.save(update_fields=["description"])
+            response_payload = _private_project_payload(
+                project,
+                request,
+                summary=False,
+            )
+            return Response(
+                response_payload,
+                status=status.HTTP_200_OK,
             )
 
         # ---------------------------------------------------------
@@ -1400,6 +1464,7 @@ class PrivateProjectAttachmentsAPI(APIView):
             uploader_name = "Admin"
 
         created_attachments = []
+        custom_title = (request.data.get("title") or request.data.get("label") or "").strip()
 
         # 1. Check for file uploads
         files = request.FILES.getlist("files") or request.FILES.getlist("file")
@@ -1416,6 +1481,7 @@ class PrivateProjectAttachmentsAPI(APIView):
                     plan=plan if isinstance(plan, PrivateProjectPlan) else None,
                     file=f,
                     file_name=f.name,
+                    title=custom_title,
                     file_size=f.size,
                     uploaded_by=user,
                     uploader_name=uploader_name,
@@ -1435,15 +1501,15 @@ class PrivateProjectAttachmentsAPI(APIView):
             except Exception:
                 return Response({"detail": "Invalid URL format."}, status=status.HTTP_400_BAD_REQUEST)
 
-            file_name = (request.data.get("file_name") or request.data.get("title") or "").strip()
-            if not file_name:
-                file_name = raw_url
+            link_title = (request.data.get("file_name") or custom_title or "").strip()
+            file_name = link_title or raw_url
 
             attachment = PrivateProjectAttachment.objects.create(
                 project=project,
                 plan=plan if isinstance(plan, PrivateProjectPlan) else None,
                 link_url=raw_url,
                 file_name=file_name,
+                title=link_title,
                 uploaded_by=user,
                 uploader_name=uploader_name,
             )

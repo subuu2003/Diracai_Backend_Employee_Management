@@ -11,7 +11,9 @@ class CanAccessPrivateProject(BasePermission):
             return False
         if request.method in SAFE_METHODS:
             return True
-        return bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "is_admin", False))
+        if bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "is_admin", False)):
+            return True
+        return bool(getattr(user, "employee_profile", None))
 
     def has_object_permission(self, request, view, obj):
         user = getattr(request, "user", None)
@@ -28,7 +30,6 @@ class CanAccessPrivateProject(BasePermission):
         if not project_id:
             return False
 
-        return PrivateProjectAssignment.objects.filter(plan__project_id=project_id, employee=employee).exists()
         if getattr(employee, "private_project_id", None) == project_id:
             return True
 
